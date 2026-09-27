@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-labelledby="title">
+  <title id="title">Communication skills</title>
+  <path d="M12 25h65c8 0 14 6 14 14v18c0 8-6 14-14 14H38L23 84V71c-6-1-11-6-11-13V25Z" fill="#f9ab00"/>
+  <circle cx="36" cy="48" r="5" fill="#fef7e0"/>
+  <circle cx="52" cy="48" r="5" fill="#fef7e0"/>
+  <circle cx="68" cy="48" r="5" fill="#fef7e0"/>
+  <path d="M51 77h46c6 0 11 5 11 11v13H82l-12 10v-10H62c-6 0-11-5-11-11V77Z" fill="#f29900"/>
+</svg>

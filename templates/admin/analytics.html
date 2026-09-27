@@ -1,0 +1,311 @@
+{% extends "base_app.html" %}
+{% load static %}
+
+{% block extra_head %}
+  <link href="{% static 'css/admin-analytics.css' %}?v=20260729-3" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+<header class="peertrain-analytics-header mb-4">
+  <div>
+    <h1 class="h2 fw-bold text-dark mb-0">Training Analytics</h1>
+  </div>
+</header>
+
+<section class="peertrain-analytics-filter-card mb-3" aria-labelledby="analytics-view-heading">
+  <div class="peertrain-analytics-filter-copy">
+    <span class="peertrain-analytics-filter-icon" aria-hidden="true">
+      <i class="bi bi-person-lines-fill"></i>
+    </span>
+    <div>
+      <h2 id="analytics-view-heading" class="h6 fw-bold mb-1">Analysis view</h2>
+      <p class="text-muted small mb-0">
+        Compare all trainees or select one trainee to inspect their individual progress.
+      </p>
+    </div>
+  </div>
+  <form method="get" class="peertrain-analytics-filter" aria-label="Select analytics view">
+    <label for="analytics-trainee">Trainee</label>
+    <div class="peertrain-analytics-filter-controls">
+      <select
+        class="form-select"
+        id="analytics-trainee"
+        name="trainee"
+        data-analytics-scope
+      >
+        <option value="">All trainees · cohort average</option>
+        <optgroup label="Individual trainee">
+          {% for trainee in trainee_choices %}
+            <option
+              value="{{ trainee.id }}"
+              {% if selected_trainee.id == trainee.id %}selected{% endif %}
+            >
+              {{ trainee.full_name_or_email }}{% if not trainee.is_active %} (inactive){% endif %}
+            </option>
+          {% endfor %}
+        </optgroup>
+      </select>
+      <button type="submit" class="btn btn-outline-primary">Apply</button>
+      {% if selected_trainee %}
+        <a class="btn btn-link peertrain-analytics-clear" href="{% url 'admin_analytics' %}">
+          Clear
+        </a>
+      {% endif %}
+    </div>
+  </form>
+</section>
+
+<p class="peertrain-analytics-scope mb-3">
+  Showing:
+  <strong>{{ snapshot.scope_label }}</strong>
+  · {{ snapshot.total_sessions }} completed
+  · {{ snapshot.observed_session_count }} with observed Boundary Skills Rubric scores
+  {% if snapshot.scope == "cohort" %}· {{ snapshot.effective_trainee_count }} contributing trainee{{ snapshot.effective_trainee_count|pluralize }}{% else %}· individual results with cohort benchmark{% endif %}
+</p>
+
+<section class="row g-3 mb-4" aria-label="Analytics summary">
+  <div class="col-6 col-xl-3">
+    <article class="peertrain-card peertrain-analytics-stat">
+      <div class="peertrain-analytics-stat-label">Completed sessions</div>
+      <div class="peertrain-analytics-stat-value">{{ snapshot.total_sessions }}</div>
+      <div class="peertrain-analytics-stat-note">{{ snapshot.observed_session_count }} with observed Boundary Skills Rubric scores</div>
+    </article>
+  </div>
+  <div class="col-6 col-xl-3">
+    <article class="peertrain-card peertrain-analytics-stat">
+      <div class="peertrain-analytics-stat-label">Agency</div>
+      <div class="peertrain-analytics-stat-value">
+        {% if snapshot.averages.agency is not None %}{{ snapshot.averages.agency }}/5{% else %}<span>No data</span>{% endif %}
+      </div>
+      <div class="peertrain-analytics-stat-note">
+        {% if snapshot.scope == "cohort" %}Trainee-weighted mean{% else %}Observed-session mean{% endif %}
+      </div>
+    </article>
+  </div>
+  <div class="col-6 col-xl-3">
+    <article class="peertrain-card peertrain-analytics-stat">
+      <div class="peertrain-analytics-stat-label">Relationship</div>
+      <div class="peertrain-analytics-stat-value">
+        {% if snapshot.averages.relationship is not None %}{{ snapshot.averages.relationship }}/5{% else %}<span>No data</span>{% endif %}
+      </div>
+      <div class="peertrain-analytics-stat-note">
+        {% if snapshot.scope == "cohort" %}Trainee-weighted mean{% else %}Observed-session mean{% endif %}
+      </div>
+    </article>
+  </div>
+  <div class="col-6 col-xl-3">
+    <article class="peertrain-card peertrain-analytics-stat">
+      <div class="peertrain-analytics-stat-label">Safety</div>
+      <div class="peertrain-analytics-stat-value">
+        {% if snapshot.averages.safety is not None %}{{ snapshot.averages.safety }}/5{% else %}<span>No data</span>{% endif %}
+      </div>
+      <div class="peertrain-analytics-stat-note">
+        {% if snapshot.scope == "cohort" %}Trainee-weighted mean{% else %}Observed-session mean{% endif %}
+      </div>
+    </article>
+  </div>
+</section>
+
+<section class="mb-4">
+  <article class="peertrain-card peertrain-analytics-chart-card">
+    <div class="peertrain-analytics-chart-heading">
+      <div>
+        <h2 class="h5 fw-bold mb-1">Boundary Skill Progress</h2>
+        <p class="text-muted small mb-0">
+          {% if snapshot.scope == "cohort" %}
+            Each chart aligns trainees by their first, second, and subsequent observed attempt in that boundary.
+          {% else %}
+            Solid lines show {{ snapshot.scope_label }}. Dashed lines appear only when a reliable cohort benchmark is available.
+          {% endif %}
+        </p>
+      </div>
+      {% if snapshot.scope == "trainee" %}
+        <div class="peertrain-progress-line-key" aria-label="Line styles">
+          <span><i class="personal"></i>Selected trainee</span>
+          <span><i class="cohort"></i>Cohort benchmark</span>
+        </div>
+      {% endif %}
+    </div>
+    {% if snapshot.progress_chart.has_observations %}
+      {% if snapshot.progress_chart.has_visible_data %}
+        <div class="peertrain-progress-toolbar" data-progress-toolbar>
+          <div class="peertrain-progress-navigation">
+            <button
+              type="button"
+              class="peertrain-progress-nav-button"
+              data-progress-previous
+              aria-label="Show earlier observed attempts"
+            >
+              <i class="bi bi-chevron-left" aria-hidden="true"></i>
+            </button>
+            <span class="peertrain-progress-range-label" data-progress-range aria-live="polite"></span>
+            <button
+              type="button"
+              class="peertrain-progress-nav-button"
+              data-progress-next
+              aria-label="Show later observed attempts"
+            >
+              <i class="bi bi-chevron-right" aria-hidden="true"></i>
+            </button>
+          </div>
+          <span class="peertrain-progress-zoom-status" data-progress-zoom-status></span>
+        </div>
+      {% endif %}
+      <div
+        class="peertrain-boundary-small-multiples{% if snapshot.progress_chart.has_visible_data %} peertrain-progress-viewport{% endif %}"
+        {% if snapshot.progress_chart.has_visible_data %}
+          data-progress-viewport
+          tabindex="0"
+          role="group"
+          aria-label="Interactive boundary progress charts"
+          aria-describedby="progress-chart-help"
+        {% endif %}
+      >
+        {% for dimension in snapshot.progress_chart.dimensions %}
+          <section class="peertrain-boundary-progress-panel peertrain-boundary-progress-panel--{{ dimension.key }}">
+            <header>
+              <span class="peertrain-boundary-progress-symbol" aria-hidden="true"></span>
+              <div>
+                <h3>{{ dimension.label }}</h3>
+                <p>Observed attempt sequence</p>
+              </div>
+            </header>
+            {% if dimension.has_visible_data %}
+              <div class="peertrain-boundary-progress-canvas">
+                <canvas
+                  id="admin-{{ dimension.key }}-progress-chart"
+                  data-progress-dimension="{{ dimension.key }}"
+                  aria-label="{{ dimension.label }} progress"
+                ></canvas>
+              </div>
+            {% else %}
+              <div class="peertrain-boundary-progress-empty">
+                <i class="bi bi-graph-up" aria-hidden="true"></i>
+                {% if snapshot.scope == "cohort" %}
+                  <strong>Cohort trend not shown</strong>
+                  <span>At least {{ snapshot.progress_chart.minimum_cohort_size }} trainees must contribute to the same attempt.</span>
+                {% else %}
+                  <strong>Not observed for this trainee</strong>
+                  <span>This boundary has not yet produced an assessable result.</span>
+                {% endif %}
+              </div>
+            {% endif %}
+          </section>
+        {% endfor %}
+      </div>
+      {% if snapshot.progress_chart.has_visible_data %}
+        <div class="peertrain-progress-scrubber" data-progress-scrubber-wrap>
+          <label for="adminProgressScroll">Attempt range</label>
+          <input
+            type="range"
+            id="adminProgressScroll"
+            min="0"
+            max="0"
+            value="0"
+            step="1"
+            data-progress-scroll
+          >
+        </div>
+        <p id="progress-chart-help" class="peertrain-progress-help mb-0">
+          The latest five observed attempts are shown first.
+          Use the mouse wheel or +/- keys to zoom;
+          use Shift+wheel, the arrow keys, or the range control to move through attempts.
+        </p>
+      {% endif %}
+      {% if snapshot.scope == "cohort" %}
+        <p class="peertrain-progress-method-note mb-0">
+          Cohort means are shown only when at least {{ snapshot.progress_chart.minimum_cohort_size }} trainees contribute to the same attempt.
+        </p>
+      {% elif not snapshot.progress_chart.has_cohort_benchmark %}
+        <p class="peertrain-progress-method-note mb-0">
+          The cohort benchmark is hidden until at least {{ snapshot.progress_chart.minimum_cohort_size }} trainees contribute to the same attempt.
+        </p>
+      {% endif %}
+    {% else %}
+      <div class="peertrain-analytics-empty">
+        <i class="bi bi-graph-up" aria-hidden="true"></i>
+        <strong>No observed boundary scores yet</strong>
+        <span>Complete a session with observed Boundary Skills Rubric feedback to create a progression point.</span>
+      </div>
+    {% endif %}
+  </article>
+</section>
+
+<section class="mb-4">
+  <article class="peertrain-card peertrain-analytics-chart-card peertrain-analytics-activity-card">
+    <h2 class="h5 fw-bold mb-1">Training Activity by Calendar Week</h2>
+    <p class="text-muted small mb-0">Completed sessions in each Monday–Sunday week.</p>
+    <div class="peertrain-analytics-canvas-wrap">
+      <canvas id="adminActivityChart"></canvas>
+    </div>
+  </article>
+</section>
+
+<section class="peertrain-card peertrain-analytics-table-card">
+  <div class="mb-3">
+    <h2 class="h5 fw-bold mb-1">Trainee Progress</h2>
+    <p class="text-muted small mb-0">Most recent completed activity first.</p>
+  </div>
+  <div class="table-responsive">
+    <table class="table align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Trainee</th>
+          <th>Email</th>
+          <th>Completed sessions</th>
+          <th>Scored sessions</th>
+          <th>Average score</th>
+          <th>Last activity</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for trainee in trainee_rows %}
+          <tr>
+            <td>
+              <strong>{{ trainee.full_name_or_email }}</strong>
+              {% if not trainee.is_active %}<span class="badge rounded-pill text-bg-secondary ms-1">Inactive</span>{% endif %}
+            </td>
+            <td>{{ trainee.email }}</td>
+            <td>{{ trainee.completed_session_count }}</td>
+            <td>{{ trainee.observed_session_count }}</td>
+            <td>
+              {% if trainee.average_score is not None %}
+                {{ trainee.average_score|floatformat:1 }}/5
+              {% else %}
+                <span class="text-muted">No Boundary Skills Rubric score</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if trainee.last_activity %}
+                {{ trainee.last_activity|date:"j M Y" }}
+              {% else %}
+                <span class="text-muted">No completed sessions</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if trainee.completed_session_count %}
+                <a href="{% url 'admin_analytics' %}?trainee={{ trainee.id }}" class="peertrain-analytics-link">
+                  View analytics <i class="bi bi-arrow-right" aria-hidden="true"></i>
+                </a>
+              {% else %}
+                <span class="text-muted">Unavailable</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="7" class="text-center text-muted py-4">No trainee accounts found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{{ snapshot.progress_chart|json_script:"admin-progress-data" }}
+{{ snapshot.activity_chart|json_script:"admin-activity-data" }}
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{% static 'vendor/chartjs/chart.umd.min.js' %}?v=4.5.0"></script>
+<script src="{% static 'js/admin-analytics.js' %}?v=20260729-3"></script>
+{% endblock %}

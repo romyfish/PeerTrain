@@ -1,0 +1,34 @@
+{% extends "base_app.html" %}
+
+{% block content %}
+<div class="peertrain-section-header mb-4">
+  <div>
+    <h1 class="h2 fw-bold text-dark mb-0">Platform Settings</h1>
+  </div>
+</div>
+
+<div class="row justify-content-center">
+  <div class="col-xl-8">
+    <div class="peertrain-card">
+      <form method="post" class="d-grid gap-4">
+        {% csrf_token %}
+        <div class="peertrain-muted-panel">
+          <h2 class="h5 fw-bold mb-3">Runtime Controls</h2>
+          <div class="d-grid gap-3">
+            <div>
+              <label class="form-label fw-semibold">{{ form.max_exchanges_per_session.label }}</label>
+              {{ form.max_exchanges_per_session }}
+              <div class="small text-muted mt-2">Limits how many trainee turns can be sent before the session must finish.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="d-flex gap-3">
+          <button type="submit" class="btn peertrain-btn-primary">Save Settings</button>
+          <a href="{% url 'admin_dashboard' %}" class="btn peertrain-btn-secondary">Back to Dashboard</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

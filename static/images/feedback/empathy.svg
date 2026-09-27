@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-labelledby="title">
+  <title id="title">Empathy</title>
+  <path d="M60 92C24 70 25 39 44 35c10-2 16 5 16 12 0-7 6-14 16-12 19 4 20 35-16 57Z" fill="#4285f4"/>
+  <path d="M24 50c5-17 18-29 35-31" fill="none" stroke="#8ab4f8" stroke-width="9" stroke-linecap="round"/>
+  <circle cx="23" cy="67" r="6" fill="#8ab4f8"/>
+</svg>

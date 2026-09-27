@@ -1,0 +1,9 @@
+<svg width="160" height="160" viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title">
+  <title id="title">Support without fixing</title>
+  <path d="M29 111C40 91 53 79 69 79H89C98 79 105 86 105 95C105 104 98 111 89 111H76L93 117C101 120 105 129 101 136C97 143 89 145 81 141L53 128C43 124 35 119 29 111Z" fill="#8AB4F8"/>
+  <path d="M43 104L62 87" fill="none" stroke="#4285F4" stroke-width="11" stroke-linecap="round"/>
+  <path d="M84 27H119C130 27 139 36 139 47V66C139 77 130 86 119 86H101L83 101L89 86H84C73 86 64 77 64 66V47C64 36 73 27 84 27Z" fill="#E8F0FE" stroke="#4285F4" stroke-width="7" stroke-linejoin="round"/>
+  <path d="M101 73V52" stroke="#1A73E8" stroke-width="7" stroke-linecap="round"/>
+  <path d="M101 62C90 61 86 53 86 46C96 46 101 52 101 62Z" fill="#4285F4"/>
+  <path d="M102 62C113 60 118 52 117 43C107 44 102 51 102 62Z" fill="#1A73E8"/>
+</svg>

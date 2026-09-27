@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-labelledby="title">
+  <title id="title">Referral awareness</title>
+  <circle cx="25" cy="78" r="13" fill="#73c9bd"/>
+  <path d="M28 74c13-30 30-39 52-29" fill="none" stroke="#0f9d8a" stroke-width="10" stroke-linecap="round"/>
+  <path d="m75 31 24 17-25 12Z" fill="#0f9d8a"/>
+  <rect x="87" y="66" width="11" height="37" rx="5.5" fill="#0f9d8a"/>
+  <rect x="74" y="79" width="37" height="11" rx="5.5" fill="#0f9d8a"/>
+</svg>

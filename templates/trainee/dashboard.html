@@ -1,0 +1,239 @@
+{% extends "base_app.html" %}
+{% load static %}
+
+{% block extra_head %}
+  <link href="{% static 'css/learning.css' %}?v=20260819-1" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+<div class="peertrain-learning-page peertrain-dashboard-page" data-dashboard-page>
+  <div class="peertrain-dashboard-layout">
+    <aside class="peertrain-dashboard-toc" aria-label="Dashboard quick navigation">
+      <nav class="peertrain-dashboard-toc-desktop" aria-label="Quick navigation">
+        <h2>Quick navigation</h2>
+        <a href="#dashboard-overview" class="active" data-dashboard-toc-link aria-current="location">
+          <span aria-hidden="true"></span>Overview
+        </a>
+        <a href="#dashboard-insights" data-dashboard-toc-link>
+          <span aria-hidden="true"></span>Boundary insights
+        </a>
+        <a href="#dashboard-recent" data-dashboard-toc-link>
+          <span aria-hidden="true"></span>Recent sessions
+        </a>
+      </nav>
+
+      <details class="peertrain-dashboard-toc-mobile" data-dashboard-toc-details>
+        <summary>
+          <span>Quick navigation</span>
+          <span class="peertrain-dashboard-toc-current" data-dashboard-toc-current>Overview</span>
+        </summary>
+        <nav aria-label="Quick navigation">
+          <a href="#dashboard-overview" class="active" data-dashboard-toc-link aria-current="location">Overview</a>
+          <a href="#dashboard-insights" data-dashboard-toc-link>Boundary insights</a>
+          <a href="#dashboard-recent" data-dashboard-toc-link>Recent sessions</a>
+        </nav>
+      </details>
+    </aside>
+
+    <div class="peertrain-dashboard-content">
+      <section
+        id="dashboard-overview"
+        class="peertrain-dashboard-section"
+        aria-labelledby="dashboard-overview-title"
+        tabindex="-1"
+      >
+        <header class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+          <div>
+            <h1 id="dashboard-overview-title" class="mb-0">Boundary practice, at a glance</h1>
+          </div>
+          <div class="d-flex gap-2">
+            <a class="btn btn-primary rounded-4 px-4" href="{% url 'scenarios' %}">Start training</a>
+          </div>
+        </header>
+
+        <div class="row g-3 mb-4">
+          <div class="col-6 col-xl-3">
+            <article class="peertrain-stat-card">
+              <span class="peertrain-stat-label">
+                Experience
+                <button
+                  type="button"
+                  class="peertrain-info-button"
+                  aria-label="How experience points are calculated"
+                  data-bs-toggle="popover"
+                  data-bs-trigger="focus"
+                  data-bs-placement="bottom"
+                  data-bs-content="Earn 20 XP for completing a session, 10 XP for saving a reflection, and 10 bonus XP the first time you complete each core boundary scenario."
+                ><i class="bi bi-info-circle" aria-hidden="true"></i></button>
+              </span>
+              <strong>{{ snapshot.xp }} XP</strong>
+              <small>Level {{ snapshot.xp_level }} · {{ snapshot.xp_to_next_level }} XP to next</small>
+            </article>
+          </div>
+          <div class="col-6 col-xl-3">
+            <article class="peertrain-stat-card">
+              <span>Completed</span>
+              <strong>{{ snapshot.completed_sessions }}</strong>
+            </article>
+          </div>
+          <div class="col-6 col-xl-3">
+            <article class="peertrain-stat-card">
+              <span>Current streak</span>
+              <strong>{{ snapshot.current_streak }} days</strong>
+            </article>
+          </div>
+          <div class="col-6 col-xl-3">
+            <article class="peertrain-stat-card">
+              <span>Average score</span>
+              <strong>{{ snapshot.average_boundary_score|floatformat:1 }} / 5</strong>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section
+        id="dashboard-insights"
+        class="peertrain-dashboard-section"
+        aria-label="Boundary insights"
+        tabindex="-1"
+      >
+        <div class="row g-3 mb-4">
+          <div class="col-12 col-xl-8">
+            <article class="peertrain-learning-card">
+              <div class="d-flex align-items-center gap-2 mb-4">
+                <h2 class="h4 mb-0">Boundary progress</h2>
+                <button
+                  type="button"
+                  class="peertrain-info-button"
+                  aria-label="About boundary progress"
+                  data-bs-toggle="popover"
+                  data-bs-trigger="focus"
+                  data-bs-placement="bottom"
+                  data-bs-content="PeerTrain uses a prototype five-point rubric to show observed Agency, Relationship and Safety practice. Each chart shows up to five recent results. This is formative feedback, not a clinically validated scale."
+                ><i class="bi bi-info-circle" aria-hidden="true"></i></button>
+              </div>
+              {% if snapshot.has_skill_trends %}
+                <div class="peertrain-skill-trends">
+                  {% for trend in snapshot.skill_trends %}
+                    <section
+                      class="peertrain-skill-trend peertrain-skill-trend-{{ trend.key }}"
+                      aria-labelledby="skill-trend-title-{{ trend.key }}"
+                    >
+                      <div class="peertrain-skill-trend-header">
+                        <h3 id="skill-trend-title-{{ trend.key }}">
+                          <span class="peertrain-skill-trend-marker" aria-hidden="true"></span>
+                          {{ trend.label }}
+                        </h3>
+                        {% if trend.latest_score %}
+                          <div class="peertrain-skill-trend-latest">
+                            <strong>Score {{ trend.latest_score }}</strong>
+                            {% if trend.change == None %}
+                              <span>First result</span>
+                            {% elif trend.change_direction == "up" %}
+                              <span class="positive">Up {{ trend.change_magnitude }} point{{ trend.change_magnitude|pluralize }}</span>
+                            {% elif trend.change_direction == "down" %}
+                              <span class="negative">Down {{ trend.change_magnitude }} point{{ trend.change_magnitude|pluralize }}</span>
+                            {% else %}
+                              <span>No change</span>
+                            {% endif %}
+                          </div>
+                        {% endif %}
+                      </div>
+                      {% if trend.points %}
+                        <div class="peertrain-skill-trend-chart">
+                          <canvas
+                            id="boundary-trend-chart-{{ trend.key }}"
+                            aria-label="{{ trend.label }} progress across observed attempts"
+                            role="img"
+                          ></canvas>
+                        </div>
+                      {% else %}
+                        <div class="peertrain-skill-trend-empty">Not observed yet</div>
+                      {% endif %}
+                    </section>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="peertrain-empty-state">
+                  <i class="bi bi-graph-up"></i>
+                  <h3>No completed practice yet</h3>
+                  <p>Complete a scenario to start your boundary trend.</p>
+                </div>
+              {% endif %}
+            </article>
+          </div>
+          <div class="col-12 col-xl-4">
+            <article class="peertrain-learning-card">
+              <div class="d-flex align-items-center gap-2 mb-4">
+                <h2 class="h4 mb-0">Boundary profile</h2>
+                <button
+                  type="button"
+                  class="peertrain-info-button"
+                  aria-label="About boundary profile"
+                  data-bs-toggle="popover"
+                  data-bs-trigger="focus"
+                  data-bs-placement="bottom"
+                  data-bs-content="Each axis summarises your observed results for one boundary skill. Skills without enough evidence are not scored."
+                ><i class="bi bi-info-circle" aria-hidden="true"></i></button>
+              </div>
+              {% if snapshot.average_boundary_score %}
+                <div class="peertrain-radar-wrap"><canvas id="boundary-profile-chart"></canvas></div>
+              {% else %}
+                <div class="peertrain-empty-state">
+                  <i class="bi bi-pentagon"></i>
+                  <h3>No observed skills yet</h3>
+                  <p>Your three-axis profile appears after feedback is generated.</p>
+                </div>
+              {% endif %}
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section
+        id="dashboard-recent"
+        class="peertrain-learning-card peertrain-dashboard-section"
+        aria-labelledby="dashboard-recent-title"
+        tabindex="-1"
+      >
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <div>
+            <h2 id="dashboard-recent-title" class="h4 mb-0">Recent sessions</h2>
+          </div>
+          <a href="{% url 'history' %}" class="peertrain-text-link">View history <i class="bi bi-arrow-right"></i></a>
+        </div>
+        {% if snapshot.recent_rows %}
+          <div class="peertrain-session-list">
+            {% for row in snapshot.recent_rows %}
+              <a href="{% url 'history_detail' row.id %}" class="peertrain-session-row">
+                <span class="peertrain-session-icon"><i class="bi bi-journal-check"></i></span>
+                <span class="flex-grow-1">
+                  <strong>{{ row.scenario }}</strong>
+                  <small>{{ row.date }}{% if row.ended_early %} · Ended early{% endif %}</small>
+                </span>
+                <span class="peertrain-session-score">
+                  {% if row.average_score %}Score {{ row.average_score }}{% else %}Not observed{% endif %}
+                </span>
+                <i class="bi bi-chevron-right"></i>
+              </a>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="peertrain-empty-state compact">
+            <p class="mb-0">Your completed sessions will appear here, newest first.</p>
+          </div>
+        {% endif %}
+      </section>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+  {% if snapshot.has_skill_trends or snapshot.average_boundary_score %}
+    <script src="{% static 'vendor/chartjs/chart.umd.min.js' %}?v=4.5.0"></script>
+  {% endif %}
+  {{ skill_trends_json|json_script:"boundary-skill-trends-data" }}
+  {{ skill_breakdown_json|json_script:"boundary-profile-data" }}
+  <script src="{% static 'js/progress.js' %}?v=20260729-2"></script>
+{% endblock %}

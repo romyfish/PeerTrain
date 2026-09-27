@@ -1,0 +1,47 @@
+{% extends "base_public.html" %}
+
+{% block title %}Admin Registration | PeerTrain{% endblock %}
+
+{% block content %}
+<section class="container py-5">
+  <div class="row justify-content-center">
+    <div class="col-lg-6">
+      <div class="text-center mb-4">
+        <h1 class="h2 fw-bold text-dark mb-0">Protected administrator registration</h1>
+      </div>
+      <div class="peertrain-card p-4 p-lg-5">
+        <form method="post" class="d-grid gap-3">
+          {% csrf_token %}
+          <div>
+            <label class="form-label fw-semibold">{{ form.full_name.label }}</label>
+            {{ form.full_name }}
+          </div>
+          <div>
+            <label class="form-label fw-semibold">{{ form.email.label }}</label>
+            {{ form.email }}
+          </div>
+          <div>
+            <label class="form-label fw-semibold">{{ form.admin_passcode.label }}</label>
+            {{ form.admin_passcode }}
+            {% if form.admin_passcode.errors %}<div class="text-danger small mt-1">{{ form.admin_passcode.errors|join:", " }}</div>{% endif %}
+          </div>
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">{{ form.password1.label }}</label>
+              {{ form.password1 }}
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">{{ form.password2.label }}</label>
+              {{ form.password2 }}
+            </div>
+          </div>
+          {% if form.errors and not form.admin_passcode.errors %}
+            <div class="text-danger small">{{ form.errors }}</div>
+          {% endif %}
+          <button type="submit" class="btn peertrain-btn-primary btn-lg">Create Administrator Account</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}

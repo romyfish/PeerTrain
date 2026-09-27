@@ -1,0 +1,10 @@
+<svg width="160" height="160" viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title">
+  <title id="title">Care without overextending</title>
+  <circle cx="77" cy="80" r="49" fill="#FEF7E0" stroke="#F9AB00" stroke-width="8"/>
+  <!-- The heart is centred within the boundary ring; the clock remains a separate sustainability cue. -->
+  <path d="M77 111C68 101 48 88 48 70C48 58 57 50 68 50C74 50 80 53 84 59C88 53 94 50 100 50C111 50 120 58 120 70C120 88 100 101 91 111L84 117L77 111Z" transform="translate(-7 0)" fill="#E37400"/>
+  <circle cx="118" cy="116" r="25" fill="#F29900"/>
+  <path d="M118 101V116L129 123" fill="none" stroke="#FFF8E1" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M39 47C49 34 64 29 77 30" fill="none" stroke="#F9AB00" stroke-width="8" stroke-linecap="round"/>
+  <path d="M34 50L42 34L52 48" fill="#F9AB00"/>
+</svg>

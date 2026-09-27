@@ -1,0 +1,61 @@
+{% extends "base_app.html" %}
+{% load static %}
+
+{% block extra_head %}
+  <link href="{% static 'css/learning.css' %}?v=20260819-1" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+<div class="peertrain-learning-page">
+  <header class="mb-4">
+    <h1 class="mb-0">History</h1>
+  </header>
+  <div class="peertrain-history-layout">
+    <aside class="peertrain-boundary-filters">
+      <h2>Boundaries</h2>
+      <a
+        href="{% url 'history' %}"
+        class="peertrain-boundary-filter{% if not selected_boundary %} active{% endif %}"
+        {% if not selected_boundary %}aria-current="page"{% endif %}
+      >
+        <i class="bi bi-collection"></i>
+        <span>All sessions</span>
+        <strong>{{ all_session_count }}</strong>
+      </a>
+      {% for boundary_filter in boundary_filters %}
+        <a
+          href="{% url 'history' %}?boundary={{ boundary_filter.key }}"
+          class="peertrain-boundary-filter{% if boundary_filter.active %} active{% endif %}"
+          {% if boundary_filter.active %}aria-current="page"{% endif %}
+        >
+          <i class="bi bi-tag"></i>
+          <span>{{ boundary_filter.label }}</span>
+          <strong>{{ boundary_filter.count }}</strong>
+        </a>
+      {% endfor %}
+    </aside>
+    <section class="peertrain-learning-card">
+      <div class="mb-3">
+        <h2 class="h4 mb-0">{{ selected_label }}</h2>
+      </div>
+      {% if sessions %}
+        <div class="peertrain-session-list">
+          {% for session in sessions %}
+            <a href="{% url 'history_detail' session.id %}" class="peertrain-session-row">
+              <span class="peertrain-session-icon"><i class="bi bi-file-earmark-text"></i></span>
+              <span class="flex-grow-1">
+                <strong>{{ session.history_title|default:session.scenario.title }}</strong>
+                <small>{{ session.end_time|default:session.start_time|date:"d M Y · H:i" }}</small>
+              </span>
+                  {% if session.overall_score %}<span class="peertrain-session-score">Score {{ session.overall_score }}/5</span>{% endif %}
+              <i class="bi bi-chevron-right"></i>
+            </a>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="peertrain-empty-state"><i class="bi bi-clock-history"></i><h3>No matching sessions</h3><p>Choose another boundary or complete a new scenario.</p></div>
+      {% endif %}
+    </section>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,195 @@
+{% extends "base_app.html" %}
+{% load static %}
+
+{% block extra_head %}
+  <link href="{% static 'css/admin-prompts.css' %}?v=20260729-1" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+<div class="peertrain-prompt-page">
+  <div class="peertrain-section-header peertrain-prompt-header mb-4">
+    <div>
+      <h1 class="h2 fw-bold text-dark mb-0">Admin Prompt Management</h1>
+    </div>
+    <a
+      id="prompt-new-button"
+      href="{% url 'admin_prompts' %}?group={{ active_group.key }}&amp;create=1"
+      class="btn peertrain-prompt-new"
+    >
+      <i class="bi bi-plus-lg" aria-hidden="true"></i>
+      New prompt
+    </a>
+  </div>
+
+  <nav class="peertrain-prompt-tabs" aria-label="Prompt categories">
+    {% for group in prompt_groups %}
+      <a
+        href="{% url 'admin_prompts' %}?group={{ group.key }}"
+        class="peertrain-prompt-tab{% if group.is_active %} active{% endif %}"
+        {% if group.is_active %}aria-current="page"{% endif %}
+      >
+        <span>{{ group.tab_label }}</span>
+        <span class="peertrain-prompt-tab-count" aria-label="{{ group.count }} prompts">{{ group.count }}</span>
+      </a>
+    {% endfor %}
+  </nav>
+
+  <section class="peertrain-card peertrain-prompt-list" aria-labelledby="prompt-group-title">
+    <div class="peertrain-prompt-list-heading">
+      <div>
+        <h2 id="prompt-group-title" class="h5 fw-bold mb-1">{{ active_group.title }}</h2>
+        <p class="text-muted small mb-0">{{ active_group.description }}</p>
+      </div>
+      <span class="peertrain-prompt-count" aria-label="{{ active_group.count }} prompts">{{ active_group.count }}</span>
+    </div>
+
+    {% if active_group.prompts %}
+      <div class="table-responsive peertrain-prompt-table-wrap">
+        <table class="table align-middle peertrain-prompt-table">
+          <thead>
+            <tr>
+              <th scope="col">Name</th>
+              <th scope="col">Scenario</th>
+              <th scope="col">Status</th>
+              <th scope="col">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for prompt in active_group.prompts %}
+              <tr>
+                <td data-label="Name">
+                  <div class="fw-semibold text-dark">{{ prompt.name }}</div>
+                  {% if active_group.key == "default" %}
+                    <div class="small text-muted">{{ prompt.get_type_display }}</div>
+                  {% endif %}
+                </td>
+                <td data-label="Scenario">
+                  {% if prompt.scenario %}
+                    {{ prompt.scenario.title }}
+                  {% else %}
+                    <span class="text-muted">Global fallback</span>
+                  {% endif %}
+                </td>
+                <td data-label="Status">
+                  <span class="peertrain-prompt-status {% if prompt.is_active %}is-active{% else %}is-inactive{% endif %}">
+                    {% if prompt.is_active %}Active{% else %}Inactive{% endif %}
+                  </span>
+                </td>
+                <td data-label="Actions">
+                  <div class="peertrain-prompt-actions">
+                    <a
+                      id="prompt-edit-{{ prompt.id }}"
+                      href="{% url 'admin_prompts' %}?group={{ active_group.key }}&amp;edit={{ prompt.id }}"
+                      class="btn btn-sm peertrain-prompt-edit"
+                    >Edit</a>
+                    <form method="post">
+                      {% csrf_token %}
+                      <input type="hidden" name="action" value="toggle_active">
+                      <input type="hidden" name="group" value="{{ active_group.key }}">
+                      <input type="hidden" name="prompt_id" value="{{ prompt.id }}">
+                      <button type="submit" class="btn btn-sm peertrain-prompt-toggle">
+                        {% if prompt.is_active %}Deactivate{% else %}Activate{% endif %}
+                      </button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="peertrain-prompt-empty">
+        <i class="bi bi-chat-left-text" aria-hidden="true"></i>
+        <h3 class="h6 fw-bold mb-3">No prompts in this category</h3>
+        <a href="{% url 'admin_prompts' %}?group={{ active_group.key }}&amp;create=1" class="btn btn-sm peertrain-prompt-new">
+          <i class="bi bi-plus-lg" aria-hidden="true"></i>
+          New prompt
+        </a>
+      </div>
+    {% endif %}
+  </section>
+</div>
+
+{% if form %}
+  <aside
+    class="offcanvas offcanvas-start peertrain-prompt-drawer"
+    tabindex="-1"
+    id="promptEditor"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="promptEditorLabel"
+    data-auto-open="true"
+    data-return-focus="{{ drawer_return_selector }}"
+  >
+    <div class="offcanvas-header peertrain-prompt-drawer-header">
+      <div>
+        <h2 class="h4 fw-bold mb-1" id="promptEditorLabel">
+          {% if drawer_mode == "edit" %}Edit prompt{% else %}New prompt{% endif %}
+        </h2>
+        <p class="small text-muted mb-0">
+          {% if editing %}
+            {{ editing.name }} - {% if editing.scenario %}{{ editing.scenario.title }}{% else %}Global fallback{% endif %}
+          {% else %}
+            Create instructions for a training stage or global fallback.
+          {% endif %}
+        </p>
+        <span class="peertrain-prompt-framework">{{ framework_version }}</span>
+      </div>
+      <button type="button" class="peertrain-prompt-drawer-close" data-bs-dismiss="offcanvas" aria-label="Close editor">
+        <span aria-hidden="true">&times;</span>
+      </button>
+    </div>
+
+    <form method="post" class="peertrain-prompt-drawer-form" novalidate>
+      {% csrf_token %}
+      <input type="hidden" name="action" value="save_prompt">
+      <input type="hidden" name="group" value="{{ active_group.key }}">
+      {% if editing %}<input type="hidden" name="prompt_id" value="{{ editing.id }}">{% endif %}
+
+      <div class="offcanvas-body peertrain-prompt-drawer-body">
+        {% if form.non_field_errors %}
+          <div class="alert alert-danger" role="alert">{{ form.non_field_errors|join:", " }}</div>
+        {% endif %}
+
+        {% for field in form %}
+          {% if field.name == "is_active" %}
+            <div class="form-check form-switch peertrain-prompt-active-field">
+              {{ field }}
+              <label class="form-check-label fw-semibold" for="{{ field.id_for_label }}">{{ field.label }}</label>
+            </div>
+          {% else %}
+            <div class="peertrain-prompt-field">
+              <label class="form-label fw-semibold" for="{{ field.id_for_label }}">{{ field.label }}</label>
+              {{ field }}
+              {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+            </div>
+          {% endif %}
+          {% if field.errors %}
+            <div class="invalid-feedback d-block" id="{{ field.id_for_label }}-error">{{ field.errors|join:", " }}</div>
+          {% endif %}
+        {% endfor %}
+
+        <section class="peertrain-protected-contract" aria-labelledby="protected-contract-title">
+          <div class="peertrain-protected-contract-heading">
+            <i class="bi bi-shield-lock" aria-hidden="true"></i>
+            <h3 id="protected-contract-title">Protected Contract &amp; Validation</h3>
+          </div>
+          <p id="protected-contract-copy">{{ protected_contract }}</p>
+          <small>Protected by the application and not editable from this page.</small>
+        </section>
+      </div>
+
+      <div class="peertrain-prompt-drawer-footer">
+        <button type="button" class="btn peertrain-prompt-cancel" data-bs-dismiss="offcanvas">Cancel</button>
+        <button type="submit" class="btn peertrain-btn-primary">Save prompt</button>
+      </div>
+    </form>
+  </aside>
+  {{ protected_contracts|json_script:"prompt-protected-contracts" }}
+{% endif %}
+{% endblock %}
+
+{% block extra_scripts %}
+  <script src="{% static 'js/admin-prompts.js' %}?v=20260729-1"></script>
+{% endblock %}

@@ -1,0 +1,30 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ page_title|default:"PeerTrain" }} | PeerTrain{% endblock %}</title>
+  <link rel="icon" type="image/svg+xml" href="{% static 'images/peertrain-logo.svg' %}">
+  <link href="{% static 'vendor/plus-jakarta-sans/plus-jakarta-sans.css' %}?v=20260730-1" rel="stylesheet">
+  <link href="{% static 'vendor/bootstrap/bootstrap.min.css' %}?v=5.3.7" rel="stylesheet">
+  <link href="{% static 'vendor/bootstrap-icons/bootstrap-icons.min.css' %}?v=1.13.1" rel="stylesheet">
+  <link href="{% static 'css/theme.css' %}?v=20260730-1" rel="stylesheet">
+  <link href="{% static 'css/minimal.css' %}?v=20260728-4" rel="stylesheet">
+  {% block extra_head %}{% endblock %}
+</head>
+<body class="peertrain-body {% block body_class %}{% endblock %}">
+  {% include "includes/top_navigation.html" with public_layout=False %}
+  <div class="peertrain-shell">
+    <main class="peertrain-main">
+      <div class="{% block app_container_class %}container-fluid py-4 px-4 px-xl-5{% endblock %}">
+        {% include "includes/messages.html" %}
+        {% block content %}{% endblock %}
+      </div>
+    </main>
+  </div>
+  <script src="{% static 'vendor/bootstrap/bootstrap.bundle.min.js' %}?v=5.3.7"></script>
+  <script src="{% static 'js/notifications.js' %}?v=20260728-1"></script>
+  {% block extra_scripts %}{% endblock %}
+</body>
+</html>

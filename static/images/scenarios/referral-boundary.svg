@@ -1,0 +1,12 @@
+<svg width="160" height="160" viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title">
+  <title id="title">Escalate without abandoning</title>
+  <circle cx="39" cy="51" r="16" fill="#74C7B8"/>
+  <path d="M17 114V96C17 78 26 69 39 69C52 69 61 78 61 96V114H17Z" fill="#74C7B8"/>
+  <circle cx="76" cy="64" r="14" fill="#0F9D8A"/>
+  <path d="M57 117V100C57 83 65 76 76 76C87 76 95 83 95 100V117H57Z" fill="#0F9D8A"/>
+  <path d="M50 88C56 82 62 80 67 82" fill="none" stroke="#0F9D8A" stroke-width="7" stroke-linecap="round"/>
+  <path d="M91 84C103 72 112 67 122 67" fill="none" stroke="#0F9D8A" stroke-width="9" stroke-linecap="round"/>
+  <path d="M116 55L139 67L116 79Z" fill="#0F9D8A"/>
+  <path d="M129 77L151 86V103C151 119 141 132 129 139C117 132 107 119 107 103V86L129 77Z" fill="#E6F4EA" stroke="#0F9D8A" stroke-width="6" stroke-linejoin="round"/>
+  <path d="M129 92V116M117 104H141" stroke="#0F9D8A" stroke-width="7" stroke-linecap="round"/>
+</svg>

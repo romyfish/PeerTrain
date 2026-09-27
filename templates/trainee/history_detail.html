@@ -1,0 +1,118 @@
+{% extends "base_app.html" %}
+{% load static %}
+
+{% block extra_head %}
+  <link href="{% static 'css/learning.css' %}?v=20260819-1" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+<div class="peertrain-learning-page peertrain-history-detail-page">
+  <a href="{% url 'history' %}" class="peertrain-text-link d-inline-flex mb-3">
+    <i class="bi bi-arrow-left me-2"></i>Back to history
+  </a>
+  <header class="peertrain-history-detail-header">
+    <h1 class="mb-2">{{ scenario_meta.canonical_name|default:session.scenario.title }}</h1>
+    <p class="text-muted mb-0">{{ session.end_time|default:session.start_time|date:"d M Y · H:i" }}</p>
+  </header>
+
+  <div class="peertrain-history-detail-workspace">
+    <section class="peertrain-learning-card peertrain-history-conversation-panel">
+      <h2 class="h4">Conversation</h2>
+      <div class="peertrain-history-transcript" role="log" aria-label="History conversation">
+        {% for message in session.messages.all %}
+          <article class="peertrain-history-message {% if message.sender_type == 'USER' %}user{% else %}ai{% endif %}">
+            {% if message.sender_type == 'USER' %}
+              <span class="peertrain-history-user-avatar" aria-hidden="true">{{ request.user.initials }}</span>
+            {% else %}
+              {% include "trainee/includes/ai_help_seeker_avatar.html" %}
+            {% endif %}
+            <div class="peertrain-history-message-stack">
+              <strong>{% if message.sender_type == 'USER' %}You{% else %}AI Help-seeker{% endif %}</strong>
+              <div class="peertrain-history-message-bubble">{{ message.content }}</div>
+              <time datetime="{{ message.created_at|date:'c' }}">{{ message.created_at|date:"H:i" }}</time>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    </section>
+
+    <aside class="peertrain-learning-card peertrain-history-review-panel" aria-label="Session learning review">
+      <div class="accordion peertrain-history-accordion" id="history-review-accordion">
+        <div class="accordion-item">
+          <h2 class="accordion-header" id="history-boundary-heading">
+            <button
+              class="accordion-button"
+              type="button"
+              data-bs-toggle="collapse"
+              data-bs-target="#history-boundary-review"
+              aria-expanded="true"
+              aria-controls="history-boundary-review"
+            >
+              Boundary review
+            </button>
+          </h2>
+          <div
+            id="history-boundary-review"
+            class="accordion-collapse collapse show"
+            aria-labelledby="history-boundary-heading"
+            data-bs-parent="#history-review-accordion"
+          >
+            <div class="accordion-body">
+              {% for score in feedback.scores.all %}
+                <div class="peertrain-history-score">
+                  <span>{{ score.get_criterion_display }}</span>
+                  <strong>
+                    {% if score.review_required %}Needs review{% elif score.observed %}Score {{ score.score }}{% else %}Not observed{% endif %}
+                  </strong>
+                </div>
+              {% endfor %}
+              {% for item in feedback.review_items.all %}
+                <div class="peertrain-history-mistake">
+                  <span>{{ item.get_boundary_key_display }}</span>
+                  <strong>{{ item.issue_label }}</strong>
+                  <p>{{ item.better_reply }}</p>
+                </div>
+              {% empty %}
+                <p class="text-muted mt-3 mb-0">No boundary-specific notebook items.</p>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+
+        <div class="accordion-item">
+          <h2 class="accordion-header" id="history-reflection-heading">
+            <button
+              class="accordion-button collapsed"
+              type="button"
+              data-bs-toggle="collapse"
+              data-bs-target="#history-reflection"
+              aria-expanded="false"
+              aria-controls="history-reflection"
+            >
+              Reflection
+            </button>
+          </h2>
+          <div
+            id="history-reflection"
+            class="accordion-collapse collapse"
+            aria-labelledby="history-reflection-heading"
+            data-bs-parent="#history-review-accordion"
+          >
+            <div class="accordion-body">
+              {% if reflection %}
+                <h3>Boundary noticed</h3>
+                <p>{{ reflection.reflection_text }}</p>
+                <h3>Next action</h3>
+                <p class="mb-0">{{ reflection.action_plan }}</p>
+              {% else %}
+                <p class="text-muted">No reflection saved.</p>
+                <a href="{% url 'session_review' session.id %}" class="peertrain-text-link">Add reflection</a>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+{% endblock %}

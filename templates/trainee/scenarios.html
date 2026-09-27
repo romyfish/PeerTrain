@@ -1,0 +1,31 @@
+{% extends "base_app.html" %}
+{% load static %}
+
+{% block content %}
+<div class="peertrain-section-header mb-4">
+  <div>
+    <h1 class="h2 fw-bold text-dark mb-0">Scenario Selection</h1>
+  </div>
+</div>
+
+<div class="row g-4 peertrain-scenario-grid">
+  {% for card in cards %}
+    <div class="col-md-6">
+      <article class="peertrain-card h-100 scenario-card {{ card.meta.theme_class|default:'scenario-theme-default' }}" aria-labelledby="scenario-title-{{ card.scenario.id }}">
+        {% if card.meta.icon_asset %}
+          <div class="peertrain-scenario-visual" aria-hidden="true">
+            <img src="{% static card.meta.icon_asset %}" alt="" class="peertrain-scenario-icon">
+          </div>
+        {% endif %}
+        <h2 id="scenario-title-{{ card.scenario.id }}" class="peertrain-scenario-title">{{ card.meta.canonical_name }}</h2>
+        <p class="peertrain-scenario-context">{{ card.meta.practice_context }}</p>
+        <form method="post" class="peertrain-scenario-form">
+          {% csrf_token %}
+          <input type="hidden" name="scenario_id" value="{{ card.scenario.id }}">
+          <button type="submit" class="btn peertrain-btn-primary peertrain-scenario-start">Start Scenario</button>
+        </form>
+      </article>
+    </div>
+  {% endfor %}
+</div>
+{% endblock %}

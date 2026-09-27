@@ -1,0 +1,177 @@
+{% extends "base_app.html" %}
+{% load static %}
+
+{% block extra_head %}
+  <link href="{% static 'css/admin-scoring-reviews.css' %}?v=20260730-1" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+<header class="peertrain-review-detail-header mb-4">
+  <div>
+    <a class="peertrain-review-back" href="{% url 'admin_scoring_reviews' %}">
+      <i class="bi bi-arrow-left" aria-hidden="true"></i> Back to review queue
+    </a>
+    <span class="peertrain-review-kicker">{{ group.scope_label }}</span>
+    <h1 class="h2 fw-bold text-dark mb-1">{{ group.boundary_label }} Review</h1>
+    <p class="text-muted mb-0">{{ group.reason_label }}</p>
+  </div>
+  {% if pending_count %}
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="confirm_all">
+      <button class="btn btn-outline-success" type="submit">
+        Confirm all {{ pending_count }} pending
+      </button>
+    </form>
+  {% endif %}
+</header>
+
+<section class="peertrain-card peertrain-review-run-summary mb-4">
+  <div>
+    <span>Trainee</span>
+    <strong>{{ run.session.user.full_name_or_email }}</strong>
+  </div>
+  <div>
+    <span>Scenario</span>
+    <strong>{{ run.session.scenario.title }}</strong>
+  </div>
+  <div>
+    <span>Judge</span>
+    <strong>{{ run.model }}</strong>
+  </div>
+  <div>
+    <span>Rubric</span>
+    <strong>{{ run.rubric_version }}</strong>
+  </div>
+  <div>
+    <span>Judge score</span>
+    <strong>{{ group.judge_score|default:"Not observed" }}</strong>
+  </div>
+  <div>
+    <span>Baseline score</span>
+    <strong>{{ group.baseline_score|default:"Not observed" }}</strong>
+  </div>
+  <div>
+    <span>Currently used</span>
+    <strong>{{ group.resolved_score|default:"Not observed" }}</strong>
+  </div>
+  <div>
+    <span>Minimum confidence</span>
+    <strong>{% if group.minimum_confidence is not None %}{{ group.minimum_confidence|floatformat:2 }}{% else %}N/A{% endif %}</strong>
+  </div>
+</section>
+
+<section class="peertrain-review-instruction mb-4">
+  <i class="bi bi-quote" aria-hidden="true"></i>
+  <p>
+    Check whether each quotation is exact, whether it supports the interpretation,
+    and whether the score matches this boundary only. Confirm, correct, or reject
+    each turn. Other boundary skills must not influence this score.
+  </p>
+</section>
+
+<div class="peertrain-review-turns">
+  {% for row in review_rows %}
+    {% with evaluation=row.evaluation form=row.form %}
+      <article class="peertrain-card peertrain-review-turn">
+        <header>
+          <div>
+            <span class="peertrain-review-turn-number">Trainee turn {{ evaluation.trainee_turn_number }}</span>
+            <h2>{{ evaluation.expected_move|default:"Not applicable at this turn" }}</h2>
+          </div>
+          <div class="peertrain-review-turn-status">
+            <span>Judge: {{ evaluation.get_judgement_display }}</span>
+            {% if evaluation.score %}<strong>Score {{ evaluation.score }}/5</strong>{% endif %}
+            <span>Confidence {{ evaluation.confidence|floatformat:2 }}</span>
+          </div>
+        </header>
+
+        <div class="peertrain-review-transcript">
+          <section>
+            <h3>Help-seeker immediately before</h3>
+            <p>{{ evaluation.help_seeker_message.content|default:"No preceding help-seeker message." }}</p>
+          </section>
+          <section>
+            <h3>Trainee reply</h3>
+            <p>{{ evaluation.trainee_message.content|default:"Message unavailable." }}</p>
+          </section>
+        </div>
+
+        <div class="peertrain-review-evidence">
+          <section>
+            <h3>Evidence selected by the judge</h3>
+            {% for quote in evaluation.evidence_quotes %}
+              <blockquote>“{{ quote }}”</blockquote>
+            {% empty %}
+              <p class="text-muted">No evidence quotation because the turn was marked not applicable.</p>
+            {% endfor %}
+          </section>
+          <section>
+            <h3>Evidence interpretation</h3>
+            <p>{{ evaluation.evidence_interpretation|default:"Not applicable." }}</p>
+          </section>
+          <section>
+            <h3>Expected move</h3>
+            <p>{{ evaluation.expected_move|default:"Not applicable." }}</p>
+          </section>
+          <section>
+            <h3>Judge rationale</h3>
+            <p>{{ evaluation.rationale }}</p>
+          </section>
+        </div>
+
+        {% if evaluation.critical_concern %}
+          <div class="alert alert-danger mb-3">
+            <strong>Critical concern flagged.</strong> This result requires explicit human review.
+          </div>
+        {% endif %}
+
+        <form method="post" class="peertrain-review-form">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="review_one">
+          <input type="hidden" name="evaluation_id" value="{{ evaluation.id }}">
+          {% if form.non_field_errors %}
+            <div class="alert alert-danger">{{ form.non_field_errors }}</div>
+          {% endif %}
+          <div class="peertrain-review-form-grid">
+            <div>
+              <label for="{{ form.review_status.id_for_label }}">{{ form.review_status.label }}</label>
+              {{ form.review_status }}
+              {{ form.review_status.errors }}
+            </div>
+            <div>
+              <label for="{{ form.corrected_judgement.id_for_label }}">{{ form.corrected_judgement.label }}</label>
+              {{ form.corrected_judgement }}
+              {{ form.corrected_judgement.errors }}
+            </div>
+            <div>
+              <label for="{{ form.corrected_score.id_for_label }}">{{ form.corrected_score.label }}</label>
+              {{ form.corrected_score }}
+              <small>{{ form.corrected_score.help_text }}</small>
+              {{ form.corrected_score.errors }}
+            </div>
+            <div class="peertrain-review-notes">
+              <label for="{{ form.reviewer_notes.id_for_label }}">{{ form.reviewer_notes.label }}</label>
+              {{ form.reviewer_notes }}
+              {{ form.reviewer_notes.errors }}
+            </div>
+          </div>
+          <div class="peertrain-review-form-footer">
+            {% if evaluation.reviewed_by %}
+              <span>
+                Last reviewed by {{ evaluation.reviewed_by.full_name_or_email }}
+                on {{ evaluation.reviewed_at|date:"j M Y, H:i" }}
+              </span>
+            {% else %}
+              <span>Awaiting human review</span>
+            {% endif %}
+            <button class="btn btn-primary" type="submit">
+              {% if evaluation.reviewed_by %}Update review{% else %}Save review{% endif %}
+            </button>
+          </div>
+        </form>
+      </article>
+    {% endwith %}
+  {% endfor %}
+</div>
+{% endblock %}

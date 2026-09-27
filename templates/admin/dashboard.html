@@ -1,0 +1,61 @@
+{% extends "base_app.html" %}
+
+{% block content %}
+<div class="peertrain-section-header mb-4">
+  <div>
+    <h1 class="h2 fw-bold text-dark mb-0">Admin Dashboard</h1>
+  </div>
+</div>
+
+<div class="row g-4 mb-4">
+  <div class="col-md-6 col-xl-4"><div class="peertrain-card stat-card"><div class="text-muted small text-uppercase">Total Users</div><div class="display-6 fw-bold mt-2">{{ stats.users }}</div></div></div>
+  <div class="col-md-6 col-xl-4"><div class="peertrain-card stat-card"><div class="text-muted small text-uppercase">Completed Sessions</div><div class="display-6 fw-bold mt-2">{{ stats.completed_sessions }}</div></div></div>
+  <div class="col-md-6 col-xl-4"><div class="peertrain-card stat-card"><div class="text-muted small text-uppercase">Average Overall Score</div><div class="display-6 fw-bold mt-2">{{ stats.avg_score }}/5</div></div></div>
+  <div class="col-md-6 col-xl-4"><div class="peertrain-card stat-card"><div class="text-muted small text-uppercase">Trainees</div><div class="display-6 fw-bold mt-2">{{ stats.trainees }}</div></div></div>
+  <div class="col-md-6 col-xl-4"><div class="peertrain-card stat-card"><div class="text-muted small text-uppercase">In-progress Sessions</div><div class="display-6 fw-bold mt-2">{{ stats.in_progress_sessions }}</div></div></div>
+  <div class="col-md-6 col-xl-4"><div class="peertrain-card stat-card"><div class="text-muted small text-uppercase">Active Prompts</div><div class="display-6 fw-bold mt-2">{{ stats.active_prompts }}</div></div></div>
+  <div class="col-md-6 col-xl-4">
+    <a href="{% url 'admin_scoring_reviews' %}" class="peertrain-card stat-card d-block text-decoration-none text-dark h-100">
+      <div class="text-muted small text-uppercase">Required score reviews</div>
+      <div class="display-6 fw-bold mt-2">{{ stats.required_score_reviews }}</div>
+      <div class="small text-muted mt-2">{{ stats.sampled_score_reviews }} quality-control sample{{ stats.sampled_score_reviews|pluralize }} pending</div>
+    </a>
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-xl-5">
+    <div class="peertrain-card h-100">
+      <h2 class="h5 fw-bold mb-3">Quick Links</h2>
+      <div class="d-grid gap-3">
+        <a href="{% url 'admin_users' %}" class="peertrain-action-row"><span><i class="bi bi-people-fill me-2 text-primary"></i>Manage users</span><i class="bi bi-chevron-right"></i></a>
+        <a href="{% url 'admin_prompts' %}" class="peertrain-action-row"><span><i class="bi bi-chat-left-text-fill me-2 text-purple"></i>Manage prompts</span><i class="bi bi-chevron-right"></i></a>
+        <a href="{% url 'admin_scoring_reviews' %}" class="peertrain-action-row"><span><i class="bi bi-clipboard2-check-fill me-2 text-danger"></i>Review judge scores{% if stats.required_score_reviews %} <span class="badge text-bg-danger ms-1">{{ stats.required_score_reviews }}</span>{% endif %}</span><i class="bi bi-chevron-right"></i></a>
+        <a href="{% url 'admin_analytics' %}" class="peertrain-action-row"><span><i class="bi bi-graph-up-arrow me-2 text-warning"></i>Open analytics</span><i class="bi bi-chevron-right"></i></a>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-7">
+    <div class="peertrain-card h-100">
+      <h2 class="h5 fw-bold mb-3">Recent Completed Sessions</h2>
+      <div class="table-responsive">
+        <table class="table align-middle">
+          <thead><tr><th>User</th><th>Scenario</th><th>Date</th><th>Overall</th></tr></thead>
+          <tbody>
+            {% for session in recent_sessions %}
+              <tr>
+                <td>{{ session.user.full_name_or_email }}</td>
+                <td>{{ session.scenario.title }}</td>
+                <td>{{ session.start_time|date:"d M Y" }}</td>
+                <td>{% if session.overall_score %}<strong>Score {{ session.overall_score }}/5</strong>{% else %}<span class="text-muted">Not observed</span>{% endif %}</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="4" class="text-muted">No completed sessions yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,28 @@
+<svg width="160" height="160" viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title">
+  <title id="title">Agency, relationship and safety together</title>
+  <g transform="translate(42 10)">
+    <path d="M3 41C9 32 16 27 24 27H36C41 27 45 31 45 37C45 43 41 47 36 47H27L37 51C41 53 43 58 41 62C39 66 34 67 30 65L15 59C9 56 5 50 3 41Z" fill="#8AB4F8"/>
+    <path d="M28 8H50C57 8 63 14 63 21V33C63 40 57 46 50 46H39L28 55L32 46H28C21 46 15 40 15 33V21C15 14 21 8 28 8Z" fill="#E8F0FE" stroke="#4285F4" stroke-width="4" stroke-linejoin="round"/>
+    <path d="M39 37V24" stroke="#1A73E8" stroke-width="4" stroke-linecap="round"/>
+    <path d="M39 31C32 30 30 25 30 21C36 21 39 25 39 31Z" fill="#4285F4"/>
+    <path d="M40 31C47 29 49 24 49 19C43 20 40 24 40 31Z" fill="#1A73E8"/>
+  </g>
+  <!-- Bottom modules are scaled and inset so the triangle remains fully inside the 160px canvas. -->
+  <g transform="translate(16 88) scale(.78)">
+    <circle cx="31" cy="29" r="25" fill="#FEF7E0" stroke="#F9AB00" stroke-width="4"/>
+    <!-- Match the centred heart construction used by the standalone Relationship icon. -->
+    <path d="M31 43C26 37 16 30 16 21C16 15 21 11 27 11C30 11 34 13 36 16C38 13 41 11 45 11C51 11 56 15 56 21C56 30 46 37 41 43L36 47L31 43Z" transform="translate(-5 0)" fill="#E37400"/>
+    <circle cx="54" cy="48" r="14" fill="#F29900"/>
+    <path d="M54 40V48L60 52" fill="none" stroke="#FFF8E1" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <g transform="translate(86 88) scale(.78)">
+    <circle cx="15" cy="23" r="9" fill="#74C7B8"/>
+    <path d="M3 57V47C3 37 8 32 15 32C22 32 27 37 27 47V57H3Z" fill="#74C7B8"/>
+    <circle cx="36" cy="30" r="8" fill="#0F9D8A"/>
+    <path d="M26 57V48C26 39 30 35 36 35C42 35 46 39 46 48V57H26Z" fill="#0F9D8A"/>
+    <path d="M43 34C50 27 56 24 62 24" fill="none" stroke="#0F9D8A" stroke-width="5" stroke-linecap="round"/>
+    <path d="M58 18L71 24L58 30Z" fill="#0F9D8A"/>
+    <path d="M66 31L78 36V46C78 54 73 61 66 65C59 61 54 54 54 46V36L66 31Z" fill="#E6F4EA" stroke="#0F9D8A" stroke-width="3.5" stroke-linejoin="round"/>
+    <path d="M66 39V53M59 46H73" stroke="#0F9D8A" stroke-width="4" stroke-linecap="round"/>
+  </g>
+</svg>

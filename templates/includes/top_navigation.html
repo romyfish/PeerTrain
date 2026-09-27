@@ -1,0 +1,117 @@
+<header class="peertrain-app-topbar {% if public_layout %}peertrain-app-topbar-public{% endif %}">
+  <div class="peertrain-app-topbar-inner">
+    <a
+      href="{% if public_layout %}{% url 'landing' %}{% elif sidebar_theme == 'admin' %}{% url 'admin_dashboard' %}{% else %}{% url 'dashboard' %}{% endif %}"
+      class="peertrain-topnav-brand"
+      aria-label="PeerTrain home"
+    >
+      {% include "includes/logo.html" %}
+    </a>
+
+    {% if not public_layout %}
+      <nav class="peertrain-topnav-links peertrain-topnav-desktop" aria-label="Primary navigation">
+        {% for item in sidebar_items %}
+          <a
+            href="{{ item.url }}"
+            class="peertrain-topnav-link {% if current_page == item.name %}active{% endif %}"
+            {% if current_page == item.name %}aria-current="page"{% endif %}
+          >
+            <i class="bi {{ item.icon }}" aria-hidden="true"></i>
+            <span>{{ item.label }}</span>
+          </a>
+        {% endfor %}
+      </nav>
+    {% endif %}
+
+    <div class="peertrain-topnav-actions">
+      {% if request.user.is_authenticated %}
+        <div class="dropdown {% if not public_layout %}peertrain-topnav-desktop{% endif %}">
+          <button
+            type="button"
+            class="peertrain-account-menu-button dropdown-toggle"
+            data-bs-toggle="dropdown"
+            aria-expanded="false"
+          >
+            <span class="peertrain-topnav-avatar">{{ request.user.initials }}</span>
+            <span class="peertrain-account-menu-copy">
+              <strong>{{ request.user.full_name_or_email }}</strong>
+              <small>{{ request.user.get_role_display }}</small>
+            </span>
+          </button>
+          <div class="dropdown-menu dropdown-menu-end peertrain-account-dropdown">
+            <div class="peertrain-account-dropdown-summary">
+              <strong>{{ request.user.full_name_or_email }}</strong>
+              <span>{{ request.user.get_role_display }}</span>
+            </div>
+            <div class="dropdown-divider"></div>
+            <a href="{% url 'logout' %}" class="dropdown-item">
+              <i class="bi bi-box-arrow-right" aria-hidden="true"></i>
+              Log out
+            </a>
+          </div>
+        </div>
+
+        {% if not public_layout %}
+          <span class="peertrain-topnav-mobile-avatar" aria-hidden="true">{{ request.user.initials }}</span>
+          <button
+            type="button"
+            class="peertrain-topnav-menu-button"
+            data-bs-toggle="offcanvas"
+            data-bs-target="#peertrain-mobile-navigation"
+            aria-controls="peertrain-mobile-navigation"
+            aria-label="Open navigation menu"
+          >
+            <i class="bi bi-list" aria-hidden="true"></i>
+          </button>
+        {% endif %}
+      {% else %}
+        <a href="{% url 'login' %}" class="peertrain-topnav-login">Log In</a>
+      {% endif %}
+    </div>
+  </div>
+</header>
+
+{% if request.user.is_authenticated and not public_layout %}
+  <aside
+    class="offcanvas offcanvas-end peertrain-mobile-navigation"
+    tabindex="-1"
+    id="peertrain-mobile-navigation"
+    aria-labelledby="peertrain-mobile-navigation-title"
+  >
+    <div class="offcanvas-header peertrain-mobile-navigation-header">
+      <div>
+        <span class="peertrain-mobile-navigation-kicker">PeerTrain</span>
+        <h2 class="offcanvas-title" id="peertrain-mobile-navigation-title">Menu</h2>
+      </div>
+      <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close navigation menu"></button>
+    </div>
+    <div class="offcanvas-body peertrain-mobile-navigation-body">
+      <nav class="peertrain-mobile-navigation-links" aria-label="Mobile primary navigation">
+        {% for item in sidebar_items %}
+          <a
+            href="{{ item.url }}"
+            class="peertrain-mobile-navigation-link {% if current_page == item.name %}active{% endif %}"
+            {% if current_page == item.name %}aria-current="page"{% endif %}
+          >
+            <i class="bi {{ item.icon }}" aria-hidden="true"></i>
+            <span>{{ item.label }}</span>
+          </a>
+        {% endfor %}
+      </nav>
+
+      <div class="peertrain-mobile-account">
+        <div class="peertrain-mobile-account-summary">
+          <span class="peertrain-topnav-avatar">{{ request.user.initials }}</span>
+          <span>
+            <strong>{{ request.user.full_name_or_email }}</strong>
+            <small>{{ request.user.get_role_display }}</small>
+          </span>
+        </div>
+        <a href="{% url 'logout' %}" class="peertrain-mobile-logout">
+          <i class="bi bi-box-arrow-right" aria-hidden="true"></i>
+          Log out
+        </a>
+      </div>
+    </div>
+  </aside>
+{% endif %}

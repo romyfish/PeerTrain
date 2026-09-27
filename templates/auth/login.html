@@ -1,0 +1,41 @@
+{% extends "base_public.html" %}
+
+{% block title %}Log In | PeerTrain{% endblock %}
+
+{% block content %}
+<section class="container py-5">
+  <div class="row justify-content-center">
+    <div class="col-lg-5">
+      <div class="text-center mb-4">
+        <h1 class="h2 fw-bold text-dark mb-0">Welcome back</h1>
+      </div>
+      <div class="peertrain-card p-4 p-lg-5">
+        <form method="post" class="d-grid gap-3">
+          {% csrf_token %}
+          <div>
+            <label class="form-label fw-semibold">{{ form.email.label }}</label>
+            {{ form.email }}
+            {% if form.email.errors %}<div class="text-danger small mt-1">{{ form.email.errors|join:", " }}</div>{% endif %}
+          </div>
+          <div>
+            <label class="form-label fw-semibold">{{ form.password.label }}</label>
+            {{ form.password }}
+            {% if form.password.errors %}<div class="text-danger small mt-1">{{ form.password.errors|join:", " }}</div>{% endif %}
+          </div>
+          {% if form.non_field_errors %}<div class="text-danger small">{{ form.non_field_errors|join:", " }}</div>{% endif %}
+          <button type="submit" class="btn peertrain-btn-primary btn-lg">Log In</button>
+        </form>
+        <div class="peertrain-muted-panel mt-4">
+          <div class="fw-semibold text-dark mb-2">Demo accounts</div>
+          <div class="small text-muted mb-1">Trainee: alex.chen@university.ac.uk / password123</div>
+          <div class="small text-muted">Admin: admin@university.ac.uk / password123</div>
+        </div>
+      </div>
+      <p class="text-center text-muted small mt-4 mb-0">
+        Don't have an account?
+        <a href="{% url 'register' %}" class="fw-semibold text-decoration-none">Register here</a>
+      </p>
+    </div>
+  </div>
+</section>
+{% endblock %}

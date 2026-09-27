@@ -1,0 +1,188 @@
+{% extends "base_app.html" %}
+{% load static %}
+
+{% block extra_head %}
+  <link href="{% static 'css/admin-scoring-reviews.css' %}?v=20260730-1" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+<header class="peertrain-review-header mb-4">
+  <div>
+    <span class="peertrain-review-kicker">Human oversight</span>
+    <h1 class="h2 fw-bold text-dark mb-0">Score Review Queue</h1>
+  </div>
+</header>
+
+<section class="peertrain-review-policy mb-4" aria-labelledby="review-policy-title">
+  <i class="bi bi-shield-check" aria-hidden="true"></i>
+  <div>
+    <h2 id="review-policy-title">Why not every score?</h2>
+    <p>
+      Required review is limited to low confidence, judge/baseline disagreement,
+      missed baseline opportunities, and critical concerns. A stable
+      {{ review_sample_percent|floatformat:"-1" }}% sample monitors
+      accepted results without making routine use unmanageable.
+    </p>
+  </div>
+</section>
+
+<section class="row g-3 mb-4" aria-label="Review queue summary">
+  <div class="col-6 col-xl-3">
+    <article class="peertrain-card peertrain-review-stat peertrain-review-stat--required">
+      <span>Required now</span>
+      <strong>{{ queue_stats.required }}</strong>
+      <small>Blocks judge acceptance</small>
+    </article>
+  </div>
+  <div class="col-6 col-xl-3">
+    <article class="peertrain-card peertrain-review-stat peertrain-review-stat--sample">
+      <span>Quality samples</span>
+      <strong>{{ queue_stats.samples }}</strong>
+      <small>Does not block use</small>
+    </article>
+  </div>
+  <div class="col-6 col-xl-3">
+    <article class="peertrain-card peertrain-review-stat">
+      <span>Reviewed</span>
+      <strong>{{ queue_stats.reviewed }}</strong>
+      <small>Completed boundary groups</small>
+    </article>
+  </div>
+  <div class="col-6 col-xl-3">
+    <article class="peertrain-card peertrain-review-stat">
+      <span>Total selected</span>
+      <strong>{{ queue_stats.total }}</strong>
+      <small>Required plus samples</small>
+    </article>
+  </div>
+</section>
+
+<section class="peertrain-card peertrain-review-filter-card mb-4">
+  <form method="get" class="peertrain-review-filters">
+    <div>
+      <label for="review-status">Status</label>
+      <select class="form-select" id="review-status" name="status">
+        <option value="pending" {% if status_filter == "pending" %}selected{% endif %}>Pending</option>
+        <option value="reviewed" {% if status_filter == "reviewed" %}selected{% endif %}>Reviewed</option>
+        <option value="all" {% if status_filter == "all" %}selected{% endif %}>All selected</option>
+      </select>
+    </div>
+    <div>
+      <label for="review-scope">Queue type</label>
+      <select class="form-select" id="review-scope" name="scope">
+        <option value="">Required and sampled</option>
+        <option value="REQUIRED" {% if scope_filter == "REQUIRED" %}selected{% endif %}>Required only</option>
+        <option value="QUALITY_SAMPLE" {% if scope_filter == "QUALITY_SAMPLE" %}selected{% endif %}>Quality samples only</option>
+      </select>
+    </div>
+    <div>
+      <label for="review-boundary">Boundary</label>
+      <select class="form-select" id="review-boundary" name="boundary">
+        <option value="">All boundaries</option>
+        {% for value, label in boundary_choices %}
+          <option value="{{ value }}" {% if boundary_filter == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="review-reason">Reason</label>
+      <select class="form-select" id="review-reason" name="reason">
+        <option value="">All reasons</option>
+        {% for value, label in reason_choices %}
+          <option value="{{ value }}" {% if reason_filter == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="peertrain-review-search">
+      <label for="review-search">Trainee, scenario, or evidence</label>
+      <input class="form-control" id="review-search" type="search" name="q" value="{{ search_query }}" placeholder="Search review queue">
+    </div>
+    <div class="peertrain-review-filter-actions">
+      <button class="btn btn-primary" type="submit">Apply</button>
+      <a class="btn btn-outline-secondary" href="{% url 'admin_scoring_reviews' %}">Reset</a>
+    </div>
+  </form>
+</section>
+
+<section class="peertrain-card peertrain-review-table-card">
+  <div class="table-responsive">
+    <table class="table align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Review type</th>
+          <th>Trainee and scenario</th>
+          <th>Boundary</th>
+          <th>Score comparison</th>
+          <th>Confidence</th>
+          <th>Status</th>
+          <th><span class="visually-hidden">Action</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in page_obj %}
+          <tr>
+            <td>
+              {% if item.scope == "REQUIRED" %}
+                <span class="peertrain-review-badge peertrain-review-badge--required">Required</span>
+              {% else %}
+                <span class="peertrain-review-badge peertrain-review-badge--sample">Quality sample</span>
+              {% endif %}
+              <span class="peertrain-review-reason">{{ item.reason_label }}</span>
+            </td>
+            <td>
+              <strong>{{ item.run.session.user.full_name_or_email }}</strong>
+              <span class="peertrain-review-secondary">{{ item.run.session.scenario.title }}</span>
+              <span class="peertrain-review-secondary">{{ item.run.created_at|date:"j M Y, H:i" }}</span>
+            </td>
+            <td><strong>{{ item.boundary_label }}</strong></td>
+            <td>
+              <span class="peertrain-review-score">Judge {{ item.judge_score|default:"—" }}</span>
+              <span class="peertrain-review-score">Baseline {{ item.baseline_score|default:"—" }}</span>
+              <span class="peertrain-review-score">Used {{ item.resolved_score|default:"—" }}</span>
+            </td>
+            <td>
+              {% if item.minimum_confidence is not None %}
+                {{ item.minimum_confidence|floatformat:2 }}
+              {% else %}
+                <span class="text-muted">N/A</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if item.is_pending %}
+                <span class="peertrain-review-status peertrain-review-status--pending">{{ item.pending_count }} turn{{ item.pending_count|pluralize }} pending</span>
+              {% else %}
+                <span class="peertrain-review-status peertrain-review-status--done">Reviewed</span>
+              {% endif %}
+            </td>
+            <td class="text-end">
+              <a class="btn btn-sm btn-outline-primary" href="{% url 'admin_scoring_review_detail' item.run.id item.boundary_key %}">
+                Open review
+              </a>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="7" class="peertrain-review-empty">
+              <i class="bi bi-check2-circle" aria-hidden="true"></i>
+              <strong>No reviews match these filters</strong>
+              <span>The queue deliberately excludes routine scores that were not selected for audit.</span>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if page_obj.paginator.num_pages > 1 %}
+    <nav class="peertrain-review-pagination" aria-label="Review queue pages">
+      {% if page_obj.has_previous %}
+        <a href="?{% if query_without_page %}{{ query_without_page }}&amp;{% endif %}page={{ page_obj.previous_page_number }}">Previous</a>
+      {% endif %}
+      <span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+      {% if page_obj.has_next %}
+        <a href="?{% if query_without_page %}{{ query_without_page }}&amp;{% endif %}page={{ page_obj.next_page_number }}">Next</a>
+      {% endif %}
+    </nav>
+  {% endif %}
+</section>
+{% endblock %}

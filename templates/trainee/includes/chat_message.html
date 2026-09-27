@@ -1,0 +1,25 @@
+<article
+  class="peertrain-chat-message peertrain-chat-message-{% if message.sender_type == 'USER' %}user{% else %}ai{% endif %}"
+  data-chat-message
+  data-message-id="{{ message.id }}"
+>
+  {% if message.sender_type == 'AI' %}
+    {% include "trainee/includes/ai_help_seeker_avatar.html" %}
+  {% endif %}
+  <div class="peertrain-chat-message-stack">
+    {% if message.sender_type == 'AI' %}
+      <div class="peertrain-chat-speaker">
+        <span>AI Help-seeker</span>
+        {% if message.response_source == 'PLACEHOLDER' %}
+          <span class="peertrain-message-chip peertrain-message-chip-warning">Backup reply</span>
+        {% elif message.response_source == 'SCRIPTED' %}
+          <span class="peertrain-message-chip peertrain-message-chip-muted">Scenario opener</span>
+        {% endif %}
+      </div>
+    {% endif %}
+    <div class="peertrain-chat-message-bubble">{{ message.content|linebreaksbr }}</div>
+    <time class="peertrain-chat-message-time" datetime="{{ message.created_at|date:'c' }}">
+      {{ message.created_at|time:"H:i" }}
+    </time>
+  </div>
+</article>

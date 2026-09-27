@@ -1,0 +1,240 @@
+{% extends "base_app.html" %}
+{% load static %}
+
+{% block body_class %}peertrain-chat-page{% endblock %}
+{% block app_container_class %}peertrain-chat-page-container{% endblock %}
+
+{% block extra_head %}
+  <link href="{% static 'css/chat.css' %}?v=20260808-2" rel="stylesheet">
+{% endblock %}
+
+{% block content %}
+<div
+  class="peertrain-chat-app peertrain-scenario-shell {{ scenario_meta.theme_class|default:'scenario-theme-default' }}"
+  data-chat-app
+  data-chat-url="{% url 'chat' session.id %}"
+  data-session-id="{{ session.id }}"
+  data-user-id="{{ request.user.id }}"
+  data-user-turns="{{ user_turns }}"
+  data-max-exchanges="{{ max_exchanges }}"
+  data-boundary-score="{{ boundary_status.score|default_if_none:'' }}"
+  data-can-send="{{ can_send|yesno:'true,false' }}"
+  data-needs-opening="{{ needs_roleplay_opening|yesno:'true,false' }}"
+>
+  <div class="peertrain-chat-layout" data-boundary-coach-layout>
+    <aside class="peertrain-guidance-sidebar" data-guidance-sidebar>
+      <div class="peertrain-guidance-rail" data-guidance-rail aria-hidden="true">
+        <button type="button" class="peertrain-guidance-toggle" data-guidance-toggle aria-expanded="false" aria-label="Expand guidance">
+          <i class="bi bi-layout-sidebar-inset"></i>
+        </button>
+        <i class="bi bi-compass"></i>
+      </div>
+      <div class="peertrain-guidance-sidebar-panel" data-guidance-panel>
+        <header>
+          <h2>Guidance</h2>
+          <button type="button" class="peertrain-guidance-toggle" data-guidance-toggle aria-expanded="true" aria-label="Collapse guidance">
+            <i class="bi bi-layout-sidebar-inset"></i>
+          </button>
+        </header>
+        <details class="peertrain-guidance-section">
+          <summary>Objectives</summary>
+          <ul>{% for objective in session.scenario.learning_objectives_list %}<li>{{ objective }}</li>{% endfor %}</ul>
+        </details>
+        <details class="peertrain-guidance-section">
+          <summary>Coaching tips</summary>
+          <ul>{% for tip in scenario_meta.tips %}<li>{{ tip }}</li>{% endfor %}</ul>
+        </details>
+      </div>
+    </aside>
+    <section class="peertrain-chat-conversation" aria-labelledby="peertrain-chat-title">
+      <header class="peertrain-chat-header">
+        <div class="peertrain-chat-heading">
+          <a href="{% url 'scenarios' %}" class="peertrain-chat-back" aria-label="Back to scenarios">
+            <i class="bi bi-arrow-left" aria-hidden="true"></i>
+          </a>
+          <div class="peertrain-chat-heading-copy">
+            <h1 id="peertrain-chat-title">{{ scenario_meta.canonical_name|default:session.scenario.title }}</h1>
+            <div class="peertrain-chat-focus-line">
+              <span><span data-user-turn-count>{{ user_turns }}</span>/{{ max_exchanges }} turns</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="peertrain-chat-header-actions">
+          <button
+            type="button"
+            class="peertrain-chat-header-button peertrain-guidance-open d-lg-none"
+            data-guidance-mobile-toggle
+          >
+            <i class="bi bi-info-circle" aria-hidden="true"></i>
+            <span class="peertrain-chat-action-label">View guidance</span>
+          </button>
+          <button
+            type="button"
+            class="peertrain-chat-header-button peertrain-boundary-coach-mobile-open d-xl-none"
+            data-bs-toggle="offcanvas"
+            data-bs-target="#peertrain-boundary-coach"
+            aria-controls="peertrain-boundary-coach"
+            aria-expanded="false"
+          >
+            <i class="bi bi-activity" aria-hidden="true"></i>
+            <span class="peertrain-chat-action-label">Boundary Coach</span>
+            <span class="peertrain-boundary-coach-mobile-score" data-boundary-mobile-score>
+              {% if boundary_status.score %}L{{ boundary_status.score }}{% else %}&ndash;{% endif %}
+            </span>
+            <span class="peertrain-boundary-coach-unread" data-boundary-coach-unread hidden>
+              <span class="visually-hidden">New boundary feedback available</span>
+            </span>
+          </button>
+        </div>
+      </header>
+
+      <div
+        class="peertrain-chat-thread"
+        id="peertrain-chat-log"
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions"
+        aria-label="Role-play conversation"
+      >
+        {% for message in chat_messages %}
+          {% include "trainee/includes/chat_message.html" with message=message %}
+        {% endfor %}
+      </div>
+
+      <button type="button" class="peertrain-jump-latest" data-jump-latest hidden>
+        <i class="bi bi-arrow-down" aria-hidden="true"></i>
+        Jump to latest
+      </button>
+
+      <div class="peertrain-chat-composer-shell">
+        <form method="post" class="peertrain-chat-form" data-chat-form action="{% url 'chat' session.id %}">
+          {% csrf_token %}
+          <div class="peertrain-chat-request-status peertrain-chat-request-error" data-chat-error role="alert" hidden>
+            <span data-chat-error-text></span>
+            <button type="button" class="peertrain-chat-error-action" data-retry-opening hidden>Retry opening</button>
+            <a href="{% url 'chat' session.id %}" data-reload-conversation>Reload conversation</a>
+          </div>
+          <div class="peertrain-chat-request-status peertrain-chat-request-notice" data-chat-notice role="status" hidden></div>
+          <label for="id_content" class="visually-hidden">Your response</label>
+          {{ form.content }}
+          {% if form.content.errors %}
+            <div class="peertrain-chat-field-error">{{ form.content.errors|join:", " }}</div>
+          {% endif %}
+          <div class="peertrain-chat-composer-row">
+            <div class="peertrain-chat-composer-tools">
+              {% if show_test_reply_tools %}
+                <div class="dropup">
+                  <button
+                    type="button"
+                    class="peertrain-test-replies-toggle dropdown-toggle"
+                    data-bs-toggle="dropdown"
+                    aria-expanded="false"
+                  >
+                    Test replies
+                  </button>
+                  <div class="dropdown-menu peertrain-test-replies-menu">
+                    <div class="peertrain-test-replies-heading">Quick Test Replies</div>
+                    <div class="peertrain-test-replies-copy">Alex Chen demo account only.</div>
+                    <button type="submit" name="action" value="auto_helpful" formnovalidate class="dropdown-item peertrain-test-reply-good" data-chat-action="auto_helpful">
+                      Auto Better Reply
+                    </button>
+                    <button type="submit" name="action" value="auto_unhelpful" formnovalidate class="dropdown-item peertrain-test-reply-poor" data-chat-action="auto_unhelpful">
+                      Auto Poor Reply
+                    </button>
+                  </div>
+                </div>
+              {% endif %}
+            </div>
+            <div class="peertrain-chat-primary-actions">
+              <button
+                type="submit"
+                name="action"
+                value="finish"
+                formnovalidate
+                class="peertrain-chat-finish"
+                data-chat-finish
+                {% if user_turns < 1 %}hidden{% endif %}
+                {% if user_turns < 4 %}data-confirm-early="true"{% endif %}
+              >
+                <span data-chat-finish-label>{% if user_turns < 4 %}End early{% else %}Finish session{% endif %}</span>
+              </button>
+              <button type="submit" name="action" value="send" class="peertrain-chat-send" data-chat-send aria-label="Send response">
+                <i class="bi bi-send" aria-hidden="true"></i>
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+
+      <template data-ai-pending-template>
+        <article class="peertrain-chat-message peertrain-chat-message-ai peertrain-chat-message-pending" data-pending-ai>
+          {% include "trainee/includes/ai_help_seeker_avatar.html" %}
+          <div class="peertrain-chat-message-stack">
+            <div class="peertrain-chat-speaker">AI Help-seeker</div>
+            <div class="peertrain-chat-message-bubble peertrain-ai-responding">
+              <span class="peertrain-typing-dot"></span>
+              <span class="peertrain-typing-dot"></span>
+              <span class="peertrain-typing-dot"></span>
+              <span class="peertrain-ai-responding-label" data-ai-responding-label>Responding</span>
+            </div>
+          </div>
+        </article>
+      </template>
+    </section>
+
+    <aside
+      class="offcanvas-xl offcanvas-end peertrain-boundary-coach"
+      tabindex="-1"
+      id="peertrain-boundary-coach"
+      aria-labelledby="peertrain-boundary-coach-title"
+      data-boundary-coach
+    >
+      <div class="peertrain-boundary-coach-rail" data-boundary-coach-rail aria-hidden="true">
+        <button
+          type="button"
+          class="peertrain-boundary-coach-toggle peertrain-boundary-coach-expand"
+          data-boundary-coach-toggle
+          aria-controls="peertrain-boundary-coach-panel"
+          aria-expanded="false"
+          aria-label="Expand Boundary Coach"
+        >
+          <i class="bi bi-layout-sidebar-inset-reverse" aria-hidden="true"></i>
+        </button>
+        <i class="bi bi-activity peertrain-boundary-coach-rail-icon" aria-hidden="true"></i>
+        <span class="peertrain-boundary-coach-rail-score" data-boundary-rail-score>
+          {% if boundary_status.score %}S{{ boundary_status.score }}{% else %}&ndash;{% endif %}
+        </span>
+        <span class="peertrain-boundary-coach-unread" data-boundary-coach-unread hidden>
+          <span class="visually-hidden">New boundary feedback available</span>
+        </span>
+      </div>
+
+      <div class="peertrain-boundary-coach-panel" id="peertrain-boundary-coach-panel" data-boundary-coach-panel>
+        <div class="offcanvas-header peertrain-boundary-coach-header">
+          <h2 id="peertrain-boundary-coach-title">Boundary Coach</h2>
+          <button
+            type="button"
+            class="peertrain-boundary-coach-toggle d-none d-xl-inline-flex"
+            data-boundary-coach-toggle
+            aria-controls="peertrain-boundary-coach-panel"
+            aria-expanded="true"
+            aria-label="Collapse Boundary Coach"
+          >
+            <i class="bi bi-layout-sidebar-inset-reverse" aria-hidden="true"></i>
+          </button>
+          <button type="button" class="btn-close d-xl-none" data-bs-dismiss="offcanvas" aria-label="Close Boundary Coach"></button>
+        </div>
+        <div class="offcanvas-body peertrain-boundary-coach-body">
+          {% include "trainee/includes/boundary_coach_live.html" %}
+        </div>
+      </div>
+    </aside>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+  <script src="{% static 'js/chat.js' %}?v=20260729-6"></script>
+{% endblock %}

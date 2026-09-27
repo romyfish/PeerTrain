@@ -1,0 +1,57 @@
+{% extends "base_app.html" %}
+
+{% block content %}
+<div class="peertrain-section-header mb-4">
+  <div>
+    <h1 class="h2 fw-bold text-dark mb-0">Admin User Management</h1>
+  </div>
+</div>
+
+<div class="row g-4 mb-4">
+  <div class="col-md-3"><div class="peertrain-card stat-card"><div class="text-muted small text-uppercase">Total</div><div class="display-6 fw-bold mt-2">{{ user_summary.total }}</div></div></div>
+  <div class="col-md-3"><div class="peertrain-card stat-card"><div class="text-muted small text-uppercase">Admins</div><div class="display-6 fw-bold mt-2">{{ user_summary.admins }}</div></div></div>
+  <div class="col-md-3"><div class="peertrain-card stat-card"><div class="text-muted small text-uppercase">Trainees</div><div class="display-6 fw-bold mt-2">{{ user_summary.trainees }}</div></div></div>
+  <div class="col-md-3"><div class="peertrain-card stat-card"><div class="text-muted small text-uppercase">Active</div><div class="display-6 fw-bold mt-2">{{ user_summary.active }}</div></div></div>
+</div>
+
+<div class="peertrain-card">
+  <div class="table-responsive">
+    <table class="table align-middle">
+      <thead>
+        <tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Completed sessions</th><th>Action</th></tr>
+      </thead>
+      <tbody>
+        {% for user in users %}
+          <tr>
+            <td>{{ user.full_name_or_email }}</td>
+            <td>{{ user.email }}</td>
+            <td>{{ user.get_role_display }}</td>
+            <td><span class="badge rounded-pill {% if user.is_active %}text-bg-success{% else %}text-bg-secondary{% endif %}">{% if user.is_active %}Active{% else %}Inactive{% endif %}</span></td>
+            <td>{{ user.completed_session_count }}</td>
+            <td>
+              {% if user != request.user %}
+                <div class="d-flex flex-wrap gap-2">
+                  <form method="post">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="toggle_active">
+                    <input type="hidden" name="user_id" value="{{ user.id }}">
+                    <button type="submit" class="btn btn-sm btn-outline-dark rounded-pill">{% if user.is_active %}Deactivate{% else %}Activate{% endif %}</button>
+                  </form>
+                  <form method="post" onsubmit="return confirm('Delete {{ user.full_name_or_email|escapejs }}? This will remove the account and its related training records.');">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="delete_user">
+                    <input type="hidden" name="user_id" value="{{ user.id }}">
+                    <button type="submit" class="btn btn-sm btn-outline-danger rounded-pill">Delete</button>
+                  </form>
+                </div>
+              {% else %}
+                <span class="small text-muted">Current account</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

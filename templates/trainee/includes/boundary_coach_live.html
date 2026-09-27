@@ -1,0 +1,106 @@
+{% load static %}
+<div class="peertrain-boundary-coach-live" data-boundary-coach-live aria-live="polite">
+  <div class="peertrain-boundary-current-read">
+    <div>
+      {% if boundary_status.score %}
+        <strong>{{ boundary_status.label }}</strong>
+        <span>{{ boundary_status.summary }}</span>
+      {% else %}
+        <strong>Waiting</strong>
+        <span>Send a reply to see coaching.</span>
+      {% endif %}
+    </div>
+    <span class="peertrain-boundary-score-badge peertrain-boundary-current-{{ boundary_status.tone }}">
+      {% if boundary_status.score %}Level {{ boundary_status.score }}{% else %}&ndash;{% endif %}
+    </span>
+  </div>
+
+  <div class="peertrain-boundary-scale-frame">
+    <div class="peertrain-boundary-scale" role="list" aria-label="Boundary stability from score 1 at risk to score 5 very steady">
+      {% for step in boundary_scale_steps %}
+        <div
+          class="peertrain-boundary-scale-step peertrain-boundary-scale-step-{{ step.tone }} {% if step.active %}active{% endif %}"
+          role="listitem"
+          aria-label="Score {{ step.score }}: {{ step.label }}{% if step.active %}, current score{% endif %}"
+          {% if step.active %}aria-current="true"{% endif %}
+        >
+          <div class="peertrain-boundary-scale-index">{{ step.score }}</div>
+          <div class="peertrain-boundary-scale-label">{{ step.label }}</div>
+          <div class="peertrain-boundary-face-wrap" aria-hidden="true">
+            <img class="peertrain-boundary-face" src="{% static step.icon_asset %}" alt="">
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  {% if boundary_status.score %}
+    <div class="peertrain-boundary-map-grid">
+      {% for item in boundary_map.dimensions %}
+        <details class="peertrain-boundary-map-card peertrain-boundary-map-card-{{ item.tone }} {% if item.key == boundary_map.scenario_focus_key %}peertrain-boundary-map-card-focus{% endif %} {% if item.key == boundary_map.watchpoint_key %}peertrain-boundary-map-card-watchpoint{% endif %}">
+          <summary class="peertrain-boundary-map-row">
+            <span class="peertrain-boundary-map-row-copy">
+              <strong>{{ item.name }}</strong>
+              <span>{{ item.label }}</span>
+            </span>
+            <span class="peertrain-boundary-map-row-meta">
+              {% if item.key == boundary_map.scenario_focus_key %}<span class="peertrain-boundary-map-tag peertrain-boundary-map-tag-focus">Focus</span>{% endif %}
+              {% if item.key == boundary_map.watchpoint_key %}<span class="peertrain-boundary-map-tag peertrain-boundary-map-tag-watch">Needs attention</span>{% endif %}
+              <span class="peertrain-boundary-details-label">Details</span>
+              <i class="bi bi-chevron-down" aria-hidden="true"></i>
+            </span>
+          </summary>
+          <div class="peertrain-boundary-map-details">
+            <p class="peertrain-boundary-map-summary">{{ item.summary }}</p>
+            {% if item.observed %}
+              <div class="peertrain-boundary-turn-read">
+                <span>Expected move</span>
+                <strong>{{ item.expected_move_label }}</strong>
+                <span class="peertrain-boundary-turn-outcome peertrain-boundary-turn-outcome-{{ item.outcome }}">
+                  {{ item.outcome_label }}
+                </span>
+              </div>
+              {% if item.evidence_quotes %}
+                <div class="peertrain-boundary-reply-evidence">
+                  <span>Evidence</span>
+                  <q>{{ item.evidence_quotes.0 }}</q>
+                </div>
+              {% endif %}
+              {% if item.major_concerns or item.critical_breaches %}
+                <div class="peertrain-boundary-evidence-alert {% if item.critical_breaches %}is-critical{% endif %}">
+                  <strong>Boundary concern detected</strong>
+                  <span>
+                    {% if item.critical_breaches %}
+                      {{ item.critical_breaches.0 }}
+                    {% else %}
+                      {{ item.major_concerns.0 }}
+                    {% endif %}
+                  </span>
+                </div>
+              {% endif %}
+            {% endif %}
+            {% if item.process_steps %}
+              <div class="peertrain-boundary-process">
+                <strong>Progress</strong>
+                <ul class="peertrain-boundary-process-list">
+                  {% for step in item.process_steps %}
+                    <li class="peertrain-boundary-process-step peertrain-boundary-process-step-{{ step.status }}">
+                      <span>{{ step.label }}</span>
+                      <strong>
+                        {% if step.status == "met" %}Met
+                        {% elif step.status == "partly_met" %}Partly met
+                        {% elif step.status == "missed" %}Missed
+                        {% elif step.status == "concern" %}Boundary concern
+                        {% else %}Not reached yet{% endif %}
+                      </strong>
+                    </li>
+                  {% endfor %}
+                </ul>
+              </div>
+            {% endif %}
+          </div>
+        </details>
+      {% endfor %}
+    </div>
+  {% endif %}
+</div>

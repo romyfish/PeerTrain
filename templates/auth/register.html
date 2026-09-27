@@ -1,0 +1,48 @@
+{% extends "base_public.html" %}
+
+{% block title %}Register | PeerTrain{% endblock %}
+
+{% block content %}
+<section class="container py-5">
+  <div class="row justify-content-center">
+    <div class="col-lg-6">
+      <div class="text-center mb-4">
+        <h1 class="h2 fw-bold text-dark mb-0">Create your trainee account</h1>
+      </div>
+      <div class="peertrain-card p-4 p-lg-5">
+        <form method="post" class="d-grid gap-3">
+          {% csrf_token %}
+          <div>
+            <label class="form-label fw-semibold">{{ form.full_name.label }}</label>
+            {{ form.full_name }}
+            {% if form.full_name.errors %}<div class="text-danger small mt-1">{{ form.full_name.errors|join:", " }}</div>{% endif %}
+          </div>
+          <div>
+            <label class="form-label fw-semibold">{{ form.email.label }}</label>
+            {{ form.email }}
+            {% if form.email.errors %}<div class="text-danger small mt-1">{{ form.email.errors|join:", " }}</div>{% endif %}
+          </div>
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">{{ form.password1.label }}</label>
+              {{ form.password1 }}
+              {% if form.password1.errors %}<div class="text-danger small mt-1">{{ form.password1.errors|join:", " }}</div>{% endif %}
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">{{ form.password2.label }}</label>
+              {{ form.password2 }}
+              {% if form.password2.errors %}<div class="text-danger small mt-1">{{ form.password2.errors|join:", " }}</div>{% endif %}
+            </div>
+          </div>
+          {% if form.non_field_errors %}<div class="text-danger small">{{ form.non_field_errors|join:", " }}</div>{% endif %}
+          <button type="submit" class="btn peertrain-btn-primary btn-lg">Create Account</button>
+        </form>
+      </div>
+      <p class="text-center text-muted small mt-4 mb-0">
+        Already have an account?
+        <a href="{% url 'login' %}" class="fw-semibold text-decoration-none">Log in</a>
+      </p>
+    </div>
+  </div>
+</section>
+{% endblock %}
