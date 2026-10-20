@@ -1,8 +1,9 @@
 {% extends "base_app.html" %}
-{% load static %}
+{% load static assessment_ui %}
 
 {% block extra_head %}
   <link href="{% static 'css/learning.css' %}?v=20260819-1" rel="stylesheet">
+  <link href="{% static 'css/assessment.css' %}?v=20261020-2" rel="stylesheet">
 {% endblock %}
 
 {% block content %}
@@ -12,12 +13,9 @@
       <h1 class="mb-0">{{ scenario_meta.canonical_name|default:session.scenario.title }}</h1>
     </div>
     <div class="peertrain-review-overall">
-      <span>Overall observed point</span>
-      {% if feedback.overall_score is not None %}
-        <strong>Score {{ feedback.overall_score }}/5</strong>
-      {% else %}
-        <strong>Not observed</strong>
-      {% endif %}
+      <span>Overall feedback</span>
+      {% assessment_status feedback.overall_score overall=True as overall_status %}
+      <strong class="peertrain-assessment-title peertrain-assessment-{{ overall_status.tone }}">{{ overall_status.label }}</strong>
       {# 供应商来源保留在数据库中用于审计，不向学员展示。 #}
     </div>
   </header>

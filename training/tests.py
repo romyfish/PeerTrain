@@ -4318,7 +4318,7 @@ class PageSmokeTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Boundary Coach")
-        self.assertContains(response, "Send a reply to see coaching.", count=1)
+        self.assertContains(response, "Listening in progress")
         self.assertNotContains(response, "Live training support")
         self.assertNotContains(response, "Live Boundary Read")
         self.assertNotContains(response, "Scenario focus")
@@ -4365,7 +4365,7 @@ class PageSmokeTests(TestCase):
         self.assertContains(response, 'class="peertrain-guidance-section"', count=2, html=False)
         self.assertNotContains(response, "SCENARIO SUPPORT")
         self.assertContains(response, f'data-session-id="{self.chat_session.id}"', html=False)
-        self.assertContains(response, "/static/js/chat.js?v=20260729-6")
+        self.assertContains(response, "/static/js/chat.js?v=20261020-1")
         self.assertContains(response, "data-guidance-toggle", count=2, html=False)
         for former_level in ["Beginner", "Intermediate", "Advanced"]:
             self.assertNotContains(response, former_level)
@@ -4404,45 +4404,21 @@ class PageSmokeTests(TestCase):
         self.assertNotContains(response, "peertrain-boundary-watchpoint-panel")
         self.assertNotContains(response, "peertrain-boundary-map-definition")
 
-    def test_chat_page_renders_accessible_five_point_boundary_faces(self):
+    def test_chat_page_renders_compact_neutral_boundary_status(self):
         self.client.force_login(self.trainee)
-        expected_assets = [
-            "images/boundary-status/level-1-at-risk.svg",
-            "images/boundary-status/level-2-wobbling.svg",
-            "images/boundary-status/level-3-mixed.svg",
-            "images/boundary-status/level-4-mostly-steady.svg",
-            "images/boundary-status/level-5-very-steady.svg",
-        ]
 
         response = self.client.get(reverse("chat", kwargs={"session_id": self.chat_session.id}))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'role="listitem"', count=5)
-        self.assertContains(
-            response,
-            'aria-label="Boundary stability from score 1 at risk to score 5 very steady"',
-            html=False,
-        )
-        self.assertContains(response, 'class="peertrain-boundary-scale-frame"', html=False)
-        self.assertNotContains(response, 'data-boundary-scale-scroll', html=False)
-        self.assertNotContains(
-            response,
-            'aria-label="Horizontally scroll the five boundary stability levels"',
-            html=False,
-        )
-        rendered_html = response.content.decode()
-        asset_positions = []
-        for asset in expected_assets:
-            with self.subTest(asset=asset):
-                static_url = f"/static/{asset}"
-                self.assertContains(response, static_url)
-                self.assertIsNotNone(finders.find(asset))
-                asset_positions.append(rendered_html.index(static_url))
-        self.assertEqual(asset_positions, sorted(asset_positions))
-        for legacy_emoji in ["🟢", "🟩", "🟨", "🟧", "🟥"]:
-            self.assertNotContains(response, legacy_emoji)
+        self.assertContains(response, 'data-boundary-status', count=1)
+        self.assertContains(response, 'data-boundary-compact-status', count=2)
+        self.assertContains(response, "Listening in progress")
+        self.assertContains(response, "peertrain-assessment-neutral")
+        self.assertNotContains(response, "peertrain-boundary-scale")
+        self.assertContains(response, "images/boundary-status/listening-in-progress.svg")
+        self.assertNotContains(response, "Level ")
 
-    def test_chat_page_marks_the_current_boundary_face_and_text(self):
+    def test_chat_page_shows_current_status_and_preserves_boundary_details(self):
         Message.objects.create(
             session=self.chat_session,
             sender_type=Message.SenderTypes.USER,
@@ -4458,9 +4434,11 @@ class PageSmokeTests(TestCase):
         response = self.client.get(reverse("chat", kwargs={"session_id": self.chat_session.id}))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'aria-current="true"', count=1, html=False)
-        self.assertContains(response, f"Level {indicator.score}")
-        self.assertContains(response, indicator.label)
+        from training.templatetags.assessment_ui import assessment_status
+
+        self.assertContains(response, assessment_status(indicator.score)["label"])
+        self.assertContains(response, 'data-boundary-status', count=1)
+        self.assertNotContains(response, f"Level {indicator.score}")
         self.assertContains(response, ">Focus<", html=False)
         self.assertNotContains(response, "Current area to strengthen")
         self.assertNotContains(response, "peertrain-boundary-watchpoint-panel")

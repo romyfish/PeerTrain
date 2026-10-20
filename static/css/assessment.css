@@ -1,0 +1,44 @@
+/* Shared only by trainee chat and session feedback. */
+.peertrain-assessment-neutral { --assessment-color: #626b78; --assessment-soft: #eef0f3; }
+.peertrain-assessment-attention { --assessment-color: #a34f50; --assessment-soft: #f8e8e7; }
+.peertrain-assessment-balance { --assessment-color: #9a602c; --assessment-soft: #faeddf; }
+.peertrain-assessment-progress { --assessment-color: #806b22; --assessment-soft: #f6f0d8; }
+.peertrain-assessment-handled { --assessment-color: #56753e; --assessment-soft: #eaf2e1; }
+.peertrain-assessment-excellent { --assessment-color: #36705a; --assessment-soft: #e1efe7; }
+
+.peertrain-assessment-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  max-width: 100%;
+  color: var(--assessment-color);
+  font-size: 0.85rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.peertrain-assessment-icon {
+  display: block;
+  flex: 0 0 auto;
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 50%;
+}
+
+.peertrain-boundary-coach-live > .peertrain-assessment-status {
+  gap: 0.7rem;
+  margin-bottom: 1rem;
+  padding: 0.4rem 0.75rem;
+  font-size: 1rem;
+}
+
+.peertrain-boundary-coach-live > .peertrain-assessment-status .peertrain-assessment-icon {
+  width: 2.4rem;
+  height: 2.4rem;
+}
+.peertrain-review-overall .peertrain-assessment-title {
+  color: var(--assessment-color);
+  font-size: clamp(1.5rem, 3vw, 2.4rem);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}

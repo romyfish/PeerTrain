@@ -171,12 +171,18 @@
     }
   };
 
-  const updateBoundaryScoreLabels = (score) => {
+  const updateBoundaryStatus = (score) => {
     currentBoundaryScore = Number(score) || 0;
     app.dataset.boundaryScore = currentBoundaryScore ? String(currentBoundaryScore) : "";
-    const shortLabel = currentBoundaryScore ? `S${currentBoundaryScore}` : "–";
-    document.querySelectorAll("[data-boundary-rail-score], [data-boundary-mobile-score]").forEach((element) => {
-      element.textContent = shortLabel;
+    const status = document.querySelector("[data-boundary-status]");
+    if (!status) return;
+    document.querySelectorAll("[data-boundary-compact-status]").forEach((element) => {
+      const compactStatus = status.cloneNode(true);
+      compactStatus.removeAttribute("data-boundary-status");
+      const label = compactStatus.querySelector("span");
+      compactStatus.title = label.textContent;
+      label.classList.add("visually-hidden");
+      element.replaceChildren(compactStatus);
     });
   };
 
@@ -206,7 +212,7 @@
       currentLiveContent.insertAdjacentHTML("beforebegin", html);
       currentLiveContent.remove();
     }
-    updateBoundaryScoreLabels(boundaryScore);
+    updateBoundaryStatus(boundaryScore);
 
     const desktopCollapsed = desktopBoundaryCoach.matches && boundaryCoach?.classList.contains("is-collapsed");
     const mobileClosed = !desktopBoundaryCoach.matches && !boundaryCoach?.classList.contains("show");

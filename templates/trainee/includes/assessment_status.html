@@ -1,0 +1,6 @@
+{% load static assessment_ui %}
+{% assessment_status score as status %}
+<span class="peertrain-assessment-status peertrain-assessment-{{ status.tone }}"{% if compact %} title="{{ status.label }}"{% else %} data-boundary-status{% endif %}>
+  <img class="peertrain-assessment-icon" src="{% static status.icon_asset %}" width="32" height="32" alt="" aria-hidden="true">
+  <span{% if compact %} class="visually-hidden"{% endif %}>{{ status.label }}</span>
+</span>
