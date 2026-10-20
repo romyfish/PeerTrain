@@ -24,8 +24,27 @@
 }
 
 .peertrain-chat-app {
-  --peertrain-sidebar-min-font-size: 0.68rem;
+  /* Scale body typography by 1 / 0.86, with a 13px minimum at a 16px root. */
+  --peertrain-sidebar-min-font-size: 0.8125rem;
+  font-size: 1.1628rem;
   min-height: calc(100dvh - var(--peertrain-topbar-height));
+}
+
+/* Shared component typography overrides apply only inside this chat page. */
+.peertrain-chat-app .peertrain-assessment-status {
+  font-size: 0.9884rem;
+}
+
+.peertrain-chat-app .peertrain-boundary-coach-live > .peertrain-assessment-status {
+  font-size: 1.1628rem;
+}
+
+.peertrain-chat-app .peertrain-boundary-reply-evidence {
+  font-size: 0.8837rem;
+}
+
+.peertrain-chat-app .peertrain-boundary-reply-evidence span {
+  font-size: 0.8125rem;
 }
 
 .peertrain-chat-app.scenario-theme-emotional {
@@ -98,7 +117,7 @@
   border-radius: 0.85rem;
   color: var(--peertrain-text);
   background: #ffffff;
-  font-size: 0.76rem;
+  font-size: 0.8837rem;
   font-weight: 750;
   text-decoration: none;
 }
@@ -131,7 +150,7 @@
   margin: 0;
   overflow: hidden;
   color: var(--peertrain-text);
-  font-size: clamp(1rem, 1.6vw, 1.25rem);
+  font-size: clamp(1.1628rem, 1.8605vw, 1.4535rem);
   font-weight: 800;
   letter-spacing: -0.02em;
   text-overflow: ellipsis;
@@ -144,7 +163,7 @@
   align-items: center;
   gap: 0.35rem;
   color: color-mix(in srgb, var(--scenario-accent) 80%, #334155);
-  font-size: 0.68rem;
+  font-size: 0.8125rem;
   font-weight: 750;
 }
 
@@ -211,7 +230,7 @@
   align-items: center;
   gap: 0.45rem;
   color: var(--peertrain-text);
-  font-size: 0.7rem;
+  font-size: 0.814rem;
   font-weight: 800;
 }
 
@@ -220,7 +239,8 @@
   padding: 0.8rem 1rem;
   border-radius: 1.15rem;
   overflow-wrap: anywhere;
-  font-size: 0.86rem;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 1rem;
   line-height: 1.55;
   white-space: normal;
 }
@@ -244,12 +264,12 @@
   display: block;
   margin-top: 0.35rem;
   color: #98a2b3;
-  font-size: 0.62rem;
+  font-size: 0.8125rem;
 }
 
 .peertrain-message-chip {
   padding: 0.16rem 0.45rem;
-  font-size: 0.56rem;
+  font-size: 0.8125rem;
   line-height: 1.1;
 }
 
@@ -273,7 +293,7 @@
 .peertrain-ai-responding-label {
   margin-left: 0.2rem;
   color: color-mix(in srgb, var(--scenario-accent) 72%, #475569);
-  font-size: 0.62rem;
+  font-size: 0.8125rem;
   font-weight: 700;
 }
 
@@ -313,7 +333,7 @@
   color: #475569;
   background: #ffffff;
   box-shadow: 0 0.6rem 1.4rem rgba(15, 23, 42, 0.13);
-  font-size: 0.68rem;
+  font-size: 0.8125rem;
   font-weight: 750;
 }
 
@@ -357,7 +377,7 @@
   color: var(--peertrain-text);
   background: transparent;
   box-shadow: none;
-  font-size: 0.82rem;
+  font-size: 0.9535rem;
   line-height: 1.5;
 }
 
@@ -392,7 +412,7 @@
   border-radius: 0.7rem;
   color: #566278;
   background: #f8fafc;
-  font-size: 0.62rem;
+  font-size: 0.8125rem;
   font-weight: 750;
 }
 
@@ -406,21 +426,21 @@
 
 .peertrain-test-replies-heading {
   padding: 0.25rem 0.45rem 0;
-  font-size: 0.76rem;
+  font-size: 0.8837rem;
   font-weight: 800;
 }
 
 .peertrain-test-replies-copy {
   padding: 0.18rem 0.45rem 0.55rem;
   color: var(--peertrain-text-muted);
-  font-size: 0.64rem;
+  font-size: 0.8125rem;
 }
 
 .peertrain-test-replies-menu .dropdown-item {
   margin-top: 0.25rem;
   padding: 0.58rem 0.65rem;
   border-radius: 0.65rem;
-  font-size: 0.7rem;
+  font-size: 0.814rem;
   font-weight: 750;
 }
 
@@ -457,7 +477,7 @@
   margin: 0 0.25rem 0.4rem;
   padding: 0.45rem 0.6rem;
   border-radius: 0.6rem;
-  font-size: 0.66rem;
+  font-size: 0.8125rem;
   line-height: 1.4;
 }
 
@@ -500,7 +520,7 @@
 .peertrain-chat-field-error {
   margin: 0 0.25rem 0.4rem;
   color: #b3261e;
-  font-size: 0.68rem;
+  font-size: 0.8125rem;
 }
 
 .peertrain-boundary-coach {
@@ -529,7 +549,7 @@
 .peertrain-boundary-coach-header h2 {
   margin: 0;
   color: var(--peertrain-text);
-  font-size: 1rem;
+  font-size: 1.1628rem;
   font-weight: 800;
 }
 
@@ -608,14 +628,14 @@
 
 .peertrain-boundary-map-row-copy strong {
   color: var(--peertrain-text);
-  font-size: 0.8rem;
+  font-size: 0.9302rem;
   font-weight: 800;
   line-height: 1.25;
 }
 
 .peertrain-boundary-map-row-copy > span {
   color: var(--peertrain-text-muted);
-  font-size: 0.74rem;
+  font-size: 0.8605rem;
 }
 
 .peertrain-boundary-map-row-meta {
@@ -652,7 +672,7 @@
 .peertrain-boundary-map-summary {
   margin: 0;
   color: var(--peertrain-text-muted);
-  font-size: 0.74rem;
+  font-size: 0.8605rem;
   line-height: 1.55;
 }
 
@@ -666,7 +686,7 @@
   border-radius: 0.6rem;
   padding: 0.5rem 0.55rem;
   background: rgba(255, 255, 255, 0.64);
-  font-size: 0.72rem;
+  font-size: 0.8372rem;
 }
 
 .peertrain-boundary-turn-read > span:first-child {
@@ -718,13 +738,13 @@
   border-top: 1px solid var(--peertrain-border);
   padding-top: 0.55rem;
   color: var(--peertrain-text-muted);
-  font-size: 0.72rem;
+  font-size: 0.8372rem;
   line-height: 1.55;
 }
 
 .peertrain-boundary-process > strong {
   color: var(--peertrain-text);
-  font-size: 0.74rem;
+  font-size: 0.8605rem;
 }
 
 .peertrain-boundary-process-step {
@@ -927,14 +947,14 @@
 
   .peertrain-chat-heading h1 {
     max-width: 13.5rem;
-    font-size: 0.86rem;
+    font-size: 1rem;
   }
 
   .peertrain-chat-focus-line {
     display: block;
     max-width: 12.8rem;
     overflow: hidden;
-    font-size: 0.54rem;
+    font-size: 0.8125rem;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -977,11 +997,11 @@
   .peertrain-chat-message-bubble {
     padding: 0.68rem 0.78rem;
     border-radius: 0.95rem;
-    font-size: 0.76rem;
+    font-size: 0.8837rem;
   }
 
   .peertrain-chat-speaker {
-    font-size: 0.62rem;
+    font-size: 0.8125rem;
   }
 
   .peertrain-chat-composer-shell {
@@ -998,7 +1018,7 @@
   .peertrain-chat-form textarea.peertrain-chat-input {
     min-height: 2.55rem;
     padding: 0.55rem 0.2rem;
-    font-size: 0.75rem;
+    font-size: 0.8721rem;
   }
 
   .peertrain-chat-send {
@@ -1092,7 +1112,7 @@
 
 .peertrain-guidance-sidebar-panel h2 {
   margin: 0;
-  font-size: 1.05rem;
+  font-size: 1.2209rem;
   font-weight: 800;
 }
 
@@ -1107,7 +1127,7 @@
   justify-content: space-between;
   color: var(--peertrain-text);
   cursor: pointer;
-  font-size: 0.74rem;
+  font-size: 0.8605rem;
   font-weight: 800;
   list-style: none;
 }
@@ -1116,7 +1136,7 @@
   content: "\F282";
   color: var(--peertrain-text-muted);
   font-family: "bootstrap-icons";
-  font-size: 0.65rem;
+  font-size: 0.8125rem;
   transition: transform 160ms ease;
 }
 
@@ -1181,7 +1201,7 @@
   border-radius: 0.75rem;
   color: color-mix(in srgb, var(--scenario-accent) 82%, #172033);
   background: var(--scenario-surface);
-  font-size: 0.65rem;
+  font-size: 0.8125rem;
   font-weight: 800;
 }
 
@@ -1258,7 +1278,7 @@
 @media (max-width: 767.98px) {
   .peertrain-chat-finish {
     padding-inline: 0.55rem;
-    font-size: 0.58rem;
+    font-size: 0.8125rem;
   }
 }
 
