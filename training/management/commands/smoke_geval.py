@@ -8,7 +8,6 @@ from accounts.models import User
 from training.models import (
     BoundaryEvaluationRun,
     Message,
-    Prompt,
     Scenario,
     TrainingSession,
 )
@@ -40,16 +39,9 @@ class Command(BaseCommand):
                     learning_objectives="Preserve help-seeker choice.",
                     is_active=False,
                 )
-                prompt = Prompt.objects.create(
-                    name=f"Synthetic G-Eval Smoke {suffix}",
-                    type=Prompt.PromptTypes.ROLE_PLAY,
-                    scenario=scenario,
-                    method="Synthetic deployment validation only.",
-                )
                 session = TrainingSession.objects.create(
                     user=user,
                     scenario=scenario,
-                    prompt=prompt,
                 )
                 Message.objects.create(
                     session=session,

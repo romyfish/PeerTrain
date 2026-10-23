@@ -1,3 +1,4 @@
+from training.prompts import (ROLEPLAY_SCENARIOS, DEFAULT_PROMPT_CONTEXTS, DEFAULT_PROMPT_METHODS, SCENARIO_PROMPT_CONTEXTS, default_prompt_parts, scenario_prompt_context_for)
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -13,18 +14,11 @@ from django.utils.html import escape
 from training.content import (
     BOUNDARY_DIMENSION_ORDER,
     BOUNDARY_FRAMEWORK,
-    DEFAULT_PROMPT_CONTEXTS,
-    DEFAULT_PROMPT_METHODS,
     PLACEHOLDER_REPLY_VARIANTS,
     SCENARIO_LIBRARY,
-    SCENARIO_PROMPT_CONTEXTS,
     auto_trainee_reply_for,
     boundary_framework_for,
-    default_prompt_parts,
-    scenario_progress_step,
-    scenario_prompt_context_for,
 )
-from training.forms import PromptForm
 from training.models import (
     BoundaryEvaluationRun,
     BoundaryTurnEvaluation,
@@ -33,7 +27,6 @@ from training.models import (
     FeedbackScore,
     Message,
     PlatformSetting,
-    Prompt,
     Reflection,
     ReflectionGuidance,
     Scenario,
@@ -57,7 +50,6 @@ from training.services.ai import (
     _roleplay_quality_issue,
     _trainee_quick_reply_system_prompt,
     build_boundary_status_indicator,
-    build_roleplay_runtime_brief,
     generate_ai_opening,
     generate_ai_reply,
     generate_demo_trainee_reply,
@@ -123,139 +115,6 @@ def create_user(email, role, password="SecurePass123!"):
     )
 
 
-class PromptModelTests(TestCase):
-    def test_scenario_model_has_no_difficulty_field(self):
-        field_names = {field.name for field in Scenario._meta.get_fields()}
-
-        self.assertNotIn("difficulty", field_names)
-
-    def test_only_one_prompt_per_type_stays_active(self):
-        first = Prompt.objects.create(
-            name="Prompt A",
-            type=Prompt.PromptTypes.ROLE_PLAY,
-            content="First prompt",
-            is_active=True,
-        )
-        second = Prompt.objects.create(
-            name="Prompt B",
-            type=Prompt.PromptTypes.ROLE_PLAY,
-            content="Second prompt",
-            is_active=True,
-        )
-
-        first.refresh_from_db()
-        second.refresh_from_db()
-
-        self.assertFalse(first.is_active)
-        self.assertTrue(second.is_active)
-
-    def test_scenario_specific_active_prompts_can_coexist(self):
-        scenario_one = Scenario.objects.create(
-            title="Scenario One",
-            description="One",
-            boundary_type=Scenario.BoundaryTypes.AGENCY,
-            estimated_duration_min=10,
-            learning_objectives="One",
-            is_active=True,
-        )
-        scenario_two = Scenario.objects.create(
-            title="Scenario Two",
-            description="Two",
-            boundary_type=Scenario.BoundaryTypes.INTEGRATED,
-            estimated_duration_min=12,
-            learning_objectives="Two",
-            is_active=True,
-        )
-        prompt_one = Prompt.objects.create(
-            name="Scenario One Role Prompt",
-            type=Prompt.PromptTypes.ROLE_PLAY,
-            scenario=scenario_one,
-            content="Prompt one",
-            is_active=True,
-        )
-        prompt_two = Prompt.objects.create(
-            name="Scenario Two Role Prompt",
-            type=Prompt.PromptTypes.ROLE_PLAY,
-            scenario=scenario_two,
-            content="Prompt two",
-            is_active=True,
-        )
-
-        prompt_one.refresh_from_db()
-        prompt_two.refresh_from_db()
-
-        self.assertTrue(prompt_one.is_active)
-        self.assertTrue(prompt_two.is_active)
-        self.assertEqual(get_prompt_for_type(Prompt.PromptTypes.ROLE_PLAY, scenario_one), prompt_one)
-        self.assertEqual(get_prompt_for_type(Prompt.PromptTypes.ROLE_PLAY, scenario_two), prompt_two)
-
-    def test_inactive_scenario_prompt_is_not_used_when_active_global_fallback_exists(self):
-        scenario = Scenario.objects.create(
-            title="Prompt fallback scenario",
-            description="Prompt selection check.",
-            boundary_type=Scenario.BoundaryTypes.AGENCY,
-            estimated_duration_min=10,
-            learning_objectives="Stay within role",
-            is_active=True,
-        )
-        inactive_scenario_prompt = Prompt.objects.create(
-            name="Inactive scenario prompt",
-            type=Prompt.PromptTypes.ROLE_PLAY,
-            scenario=scenario,
-            content="This prompt must not run.",
-            is_active=False,
-        )
-        global_fallback = Prompt.objects.create(
-            name="Active global fallback",
-            type=Prompt.PromptTypes.ROLE_PLAY,
-            content="Use the global fallback.",
-            is_active=True,
-        )
-
-        selected = get_prompt_for_type(Prompt.PromptTypes.ROLE_PLAY, scenario)
-
-        self.assertEqual(selected, global_fallback)
-        self.assertNotEqual(selected, inactive_scenario_prompt)
-
-    def test_feedback_and_reflection_prefer_scenario_prompt_then_global_fallback(self):
-        scenario = Scenario.objects.create(
-            title="Scenario prompt selection",
-            description="Check scenario prompt selection.",
-            boundary_type=Scenario.BoundaryTypes.RELATIONSHIP,
-            estimated_duration_min=12,
-            learning_objectives="Name a sustainable limit",
-            is_active=True,
-        )
-        for prompt_type in (
-            Prompt.PromptTypes.FEEDBACK,
-            Prompt.PromptTypes.REFLECTION,
-        ):
-            global_prompt = Prompt.objects.create(
-                name=f"Global {prompt_type} selection prompt",
-                type=prompt_type,
-                content="Global fallback method.",
-                is_active=True,
-            )
-            scenario_prompt = Prompt.objects.create(
-                name=f"Scenario {prompt_type} selection prompt",
-                type=prompt_type,
-                scenario=scenario,
-                content="Scenario-specific method.",
-                is_active=True,
-            )
-
-            self.assertEqual(
-                get_prompt_for_type(prompt_type, scenario),
-                scenario_prompt,
-            )
-            scenario_prompt.is_active = False
-            scenario_prompt.save()
-            self.assertEqual(
-                get_prompt_for_type(prompt_type, scenario),
-                global_prompt,
-            )
-
-
 @override_settings(OPENAI_API_KEY="", GEMINI_API_KEY="", LLM_PROVIDER="google")
 class ScenarioStartTests(TestCase):
     ajax_headers = {
@@ -286,9 +145,6 @@ class ScenarioStartTests(TestCase):
 
         session = TrainingSession.objects.get(user=self.trainee)
         self.assertRedirects(response, reverse("chat", kwargs={"session_id": session.id}))
-        self.assertEqual(session.prompt.type, Prompt.PromptTypes.ROLE_PLAY)
-        self.assertEqual(session.prompt.scenario, self.scenario)
-        self.assertTrue(session.prompt.is_active)
         self.assertEqual(session.messages.count(), 0)
         mock_opening.assert_not_called()
 
@@ -355,30 +211,14 @@ class TrainingFlowBase(TestCase):
             learning_objectives="Recognise risk\nSignpost clearly",
             is_active=True,
         )
-        cls.role_prompt = Prompt.objects.create(
-            name="Role Prompt",
-            type=Prompt.PromptTypes.ROLE_PLAY,
-            content="Stay in role as the help-seeker.",
-            is_active=True,
-        )
-        cls.feedback_prompt = Prompt.objects.create(
-            name="Feedback Prompt",
-            type=Prompt.PromptTypes.FEEDBACK,
-            content="Assess the transcript with concise scores and comments.",
-            is_active=True,
-        )
-        cls.reflection_prompt = Prompt.objects.create(
-            name="Reflection Prompt",
-            type=Prompt.PromptTypes.REFLECTION,
-            content="Reflect on what you would repeat, change, and escalate.",
-            is_active=True,
-        )
+        cls.role_prompt = get_prompt_for_type('ROLE_PLAY')
+        cls.feedback_prompt = get_prompt_for_type('FEEDBACK')
+        cls.reflection_prompt = get_prompt_for_type('REFLECTION')
 
     def create_session(self, *, scenario=None, status=TrainingSession.Statuses.IN_PROGRESS, overall_score=None):
         session = TrainingSession.objects.create(
             user=self.trainee,
             scenario=scenario or self.scenario,
-            prompt=self.role_prompt,
             status=status,
             overall_score=overall_score,
             end_time=timezone.now() if status == TrainingSession.Statuses.COMPLETED else None,
@@ -396,7 +236,6 @@ class TrainingFlowBase(TestCase):
     ):
         feedback = Feedback.objects.create(
             session=session,
-            prompt=self.feedback_prompt,
             overall_score=overall_score,
             strengths="Warm tone\nGood validation\nStayed calm",
             improvements="Ask one more open question\nSummarise earlier\nSignpost sooner",
@@ -666,7 +505,6 @@ class TrainingFlowTests(TrainingFlowBase):
                 session = TrainingSession.objects.create(
                     user=demo_trainee,
                     scenario=self.scenario,
-                    prompt=self.role_prompt,
                 )
                 Message.objects.create(
                     session=session,
@@ -735,7 +573,6 @@ class TrainingFlowTests(TrainingFlowBase):
         session = TrainingSession.objects.create(
             user=demo_trainee,
             scenario=self.scenario,
-            prompt=self.role_prompt,
         )
         Message.objects.create(
             session=session,
@@ -797,7 +634,7 @@ class TrainingFlowTests(TrainingFlowBase):
         self.assertIn("Band 4 to Band 5", helpful_prompt)
         self.assertIn("Band 1 to Band 2", unhelpful_prompt)
         self.assertIn("Do not produce a middling Band 3 answer", helpful_prompt)
-        self.assertIn("Time & Availability Boundary", helpful_prompt)
+        self.assertIn("Relationship Boundary", helpful_prompt)
         self.assertIn("over-promise availability", unhelpful_prompt)
         self.assertNotIn("Difficulty:", helpful_prompt)
         self.assertNotIn("Difficulty:", unhelpful_prompt)
@@ -829,7 +666,6 @@ class TrainingFlowTests(TrainingFlowBase):
         session = TrainingSession.objects.create(
             user=registered_trainee,
             scenario=self.scenario,
-            prompt=self.role_prompt,
         )
         Message.objects.create(
             session=session,
@@ -885,14 +721,6 @@ class TrainingFlowTests(TrainingFlowBase):
     def test_reflection_submission_redirects_to_history_detail(self):
         session = self.create_session(status=TrainingSession.Statuses.COMPLETED, overall_score=3)
         self.create_feedback_bundle(session, overall_score=3, agency=4, relationship=3)
-        scenario_reflection_prompt = Prompt.objects.create(
-            name="Emotional Boundary Reflection Prompt",
-            type=Prompt.PromptTypes.REFLECTION,
-            scenario=session.scenario,
-            context="Reflect on the Agency Boundary evidence from this session.",
-            method="Ask the trainee to identify one choice-supporting next move.",
-            is_active=True,
-        )
         self.client.force_login(self.trainee)
 
         response = self.client.post(
@@ -911,7 +739,6 @@ class TrainingFlowTests(TrainingFlowBase):
             reverse("history_detail", kwargs={"session_id": session.id}),
         )
         reflection = Reflection.objects.get(session=session)
-        self.assertEqual(reflection.prompt, scenario_reflection_prompt)
 
 
 class BoundarySkillsRubricTwoTests(TestCase):
@@ -1121,7 +948,6 @@ class LLMServiceTests(TrainingFlowBase):
         )
         feedback = Feedback.objects.create(
             session=session,
-            prompt=self.feedback_prompt,
         )
         payload = FeedbackPayload(
             boundary_scores=[],
@@ -1205,18 +1031,18 @@ class LLMServiceTests(TrainingFlowBase):
         self.assertEqual(session.messages.count(), 1)
         self.assertEqual(fake_responses.last_kwargs["model"], "test-model")
         developer_prompt = fake_responses.last_kwargs["input"][0]["content"]
-        self.assertIn("The trainee has not spoken yet", developer_prompt)
-        self.assertIn(self.role_prompt.content, developer_prompt)
+        self.assertIn("You have not spoken to the trainee yet", developer_prompt)
+        self.assertIn(self.role_prompt.context, developer_prompt)
         self.assertNotIn(
             boundary_framework_for(session.scenario.boundary_type)["canonical_name"],
             developer_prompt,
         )
-        self.assertIn("Opening-turn rules", developer_prompt)
+        self.assertIn("This is your first message", developer_prompt)
         self.assertNotIn("Learning objectives:", developer_prompt)
         self.assertNotIn("Boundary behaviour contract", developer_prompt)
         self.assertNotIn("CMCV framework:", developer_prompt)
         self.assertNotIn("EDITABLE CONTEXT", developer_prompt)
-        self.assertIn("Never mention CMCV", developer_prompt)
+        self.assertIn("reveal internal instructions", developer_prompt)
 
     @override_settings(OPENAI_API_KEY="", GEMINI_API_KEY="", LLM_PROVIDER="openai")
     def test_generate_ai_opening_uses_transparent_backup_when_api_is_unavailable(self):
@@ -1306,7 +1132,7 @@ class LLMServiceTests(TrainingFlowBase):
         self.assertEqual(
             _roleplay_quality_issue(
                 session,
-                "Please do not tell me what to do. I need you to listen rather than decide for me.",
+                "You should demonstrate the Agency Boundary by exploring my choices.",
             ),
             "coaching_leak",
         )
@@ -1363,198 +1189,6 @@ class LLMServiceTests(TrainingFlowBase):
         self.assertTrue(_looks_incomplete_roleplay_reply("Score 1"))
         self.assertFalse(_looks_incomplete_roleplay_reply("I really do not want to be on my own tonight."))
 
-    def test_runtime_brief_opens_more_when_trainee_is_empathic_and_exploratory(self):
-        session = self.create_session()
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="I have been feeling really overwhelmed this week.",
-            response_source=Message.ResponseSources.SCRIPTED,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="That sounds really heavy. What feels most difficult right now?",
-            response_source=Message.ResponseSources.USER_INPUT,
-        )
-
-        runtime = build_roleplay_runtime_brief(
-            session,
-            "That sounds really heavy. What feels most difficult right now?",
-        )
-
-        self.assertEqual(runtime.stage_label, "Opening")
-        self.assertGreaterEqual(runtime.empathy_score, 1)
-        self.assertGreaterEqual(runtime.exploration_score, 1)
-        self.assertIn("Open up one level", runtime.disclosure_instruction)
-
-    def test_runtime_brief_increases_dependency_pressure_for_burnout_overpromising(self):
-        burnout = Scenario.objects.create(
-            title="Burnout & Compassion Fatigue",
-            description="Practice setting sustainable limits.",
-            boundary_type=Scenario.BoundaryTypes.RELATIONSHIP,
-            estimated_duration_min=18,
-            learning_objectives="Name limits\nOffer alternatives",
-            is_active=True,
-        )
-        session = self.create_session(scenario=burnout)
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="Can you stay on call with me tonight?",
-            response_source=Message.ResponseSources.SCRIPTED,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="I will stay with you all night and you can message me anytime.",
-            response_source=Message.ResponseSources.USER_INPUT,
-        )
-
-        runtime = build_roleplay_runtime_brief(
-            session,
-            "I will stay with you all night and you can message me anytime.",
-        )
-
-        self.assertGreaterEqual(runtime.overpromise_score, 1)
-        self.assertIn("Lean in a little more", runtime.emotional_shift)
-        self.assertIn("one believable step", runtime.target_pressure_instruction)
-
-    def test_relationship_runtime_uses_natural_overcommitment_before_turn_progression(self):
-        burnout = Scenario.objects.create(
-            title="Natural relationship overcommitment",
-            description="Detect realistic vague availability.",
-            boundary_type=Scenario.BoundaryTypes.RELATIONSHIP,
-            estimated_duration_min=18,
-            learning_objectives="Name limits\nOffer alternatives",
-            is_active=True,
-        )
-        session = self.create_session(scenario=burnout)
-        trainee_reply = (
-            "Yes, of course - you can message me again later tonight if you need to, "
-            "and I'll do my best to keep an eye out."
-        )
-
-        runtime = build_roleplay_runtime_brief(session, trainee_reply)
-
-        self.assertEqual(runtime.relationship_state, "OVERCOMMITMENT")
-        self.assertIn("one believable step", runtime.target_pressure_instruction)
-        self.assertNotIn("backup support", runtime.target_pressure_instruction)
-
-    def test_relationship_runtime_clarifies_a_mixed_limit(self):
-        burnout = Scenario.objects.create(
-            title="Mixed relationship limit",
-            description="Detect contradictory availability.",
-            boundary_type=Scenario.BoundaryTypes.RELATIONSHIP,
-            estimated_duration_min=18,
-            learning_objectives="Name limits\nOffer alternatives",
-            is_active=True,
-        )
-        session = self.create_session(scenario=burnout)
-        trainee_reply = (
-            "I can check in once before I log off, and I'll try to stay reachable after that too. "
-            "Message me if you need to and I'll respond as soon as I can."
-        )
-
-        runtime = build_roleplay_runtime_brief(session, trainee_reply)
-
-        self.assertEqual(runtime.relationship_state, "MIXED_BOUNDARY")
-        self.assertIn("when contact ends", runtime.target_pressure_instruction)
-
-    def test_relationship_quality_guard_rejects_help_seeker_coaching_after_overcommitment(self):
-        burnout = Scenario.objects.create(
-            title="Relationship branch guard",
-            description="Keep the help-seeker in role.",
-            boundary_type=Scenario.BoundaryTypes.RELATIONSHIP,
-            estimated_duration_min=18,
-            learning_objectives="Name limits\nOffer alternatives",
-            is_active=True,
-        )
-        session = self.create_session(scenario=burnout)
-        issue = _roleplay_quality_issue(
-            session,
-            "Could you help me find someone else so I do not rely on you?",
-            "Keep messaging me tonight and I will reply as soon as I can.",
-        )
-
-        self.assertEqual(issue, "relationship_branch_mismatch")
-
-    def test_relationship_placeholder_follows_the_detected_response_state(self):
-        burnout = Scenario.objects.create(
-            title="Relationship fallback state",
-            description="Keep backup replies behaviour-contingent.",
-            boundary_type=Scenario.BoundaryTypes.RELATIONSHIP,
-            estimated_duration_min=18,
-            learning_objectives="Name limits\nOffer alternatives",
-            is_active=True,
-        )
-        session = self.create_session(scenario=burnout)
-
-        reply = _placeholder_roleplay_reply(
-            session,
-            "You can message me later tonight and I will do my best to respond.",
-        )
-
-        self.assertIn("message you again after you log off", reply)
-        self.assertNotIn("other person", reply)
-
-    def test_runtime_brief_makes_missed_safety_check_explicit_after_referral(self):
-        session = self.create_session(scenario=self.other_scenario)
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="I do not know if I can keep managing this alone.",
-            response_source=Message.ResponseSources.SCRIPTED,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="The counselling service could talk this through with you.",
-            response_source=Message.ResponseSources.USER_INPUT,
-        )
-
-        runtime = build_roleplay_runtime_brief(
-            session,
-            "The counselling service could talk this through with you.",
-        )
-
-        self.assertGreaterEqual(runtime.referral_score, 1)
-        self.assertIn("not sure you can stay safe tonight", runtime.target_pressure_instruction)
-
-    def test_each_scenario_has_a_distinct_targeted_elicitation_sequence(self):
-        expected_labels = {
-            Scenario.BoundaryTypes.AGENCY: "Uncertain decision",
-            Scenario.BoundaryTypes.RELATIONSHIP: "Availability request",
-            Scenario.BoundaryTypes.SAFETY: "Serious distress cue",
-            Scenario.BoundaryTypes.INTEGRATED: "Choice under uncertainty",
-        }
-        for boundary_type, expected_label in expected_labels.items():
-            with self.subTest(boundary_type=boundary_type):
-                context = scenario_prompt_context_for(
-                    Prompt.PromptTypes.ROLE_PLAY,
-                    boundary_type,
-                )
-                first_step = scenario_progress_step(boundary_type, 1)
-
-                self.assertTrue(context)
-                self.assertEqual(first_step["label"], expected_label)
-
-    def test_runtime_brief_detects_chinese_empathy_and_exploration_markers(self):
-        session = self.create_session()
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="我这周真的有点撑不住了。",
-            response_source=Message.ResponseSources.SCRIPTED,
-        )
-
-        runtime = build_roleplay_runtime_brief(
-            session,
-            "听起来真的很不容易。对你来说现在最难的是什么？",
-        )
-
-        self.assertGreaterEqual(runtime.empathy_score, 1)
-        self.assertGreaterEqual(runtime.exploration_score, 1)
 
     def test_boundary_status_indicator_rewards_warm_chinese_limit_setting(self):
         burnout = Scenario.objects.create(
@@ -2139,21 +1773,21 @@ class LLMServiceTests(TrainingFlowBase):
         self.assertEqual(message.response_source, Message.ResponseSources.OPENAI)
         self.assertEqual(fake_responses.last_kwargs["model"], "test-model")
         developer_prompt = fake_responses.last_kwargs["input"][0]["content"]
-        self.assertIn(self.role_prompt.content, developer_prompt)
+        self.assertIn(self.role_prompt.context, developer_prompt)
         self.assertNotIn(
             boundary_framework_for(session.scenario.boundary_type)["canonical_name"],
             developer_prompt,
         )
         self.assertNotIn(session.scenario.learning_objectives, developer_prompt)
         self.assertNotIn("Boundary behaviour contract", developer_prompt)
-        self.assertIn("How to adapt to the trainee's latest message", developer_prompt)
-        self.assertIn("Turn progression guidance", developer_prompt)
-        self.assertIn("Recent help-seeker wording to avoid copying too closely", developer_prompt)
-        self.assertIn("Human realism rules", developer_prompt)
-        self.assertIn("Stage:", developer_prompt)
+        self.assertNotIn("How to adapt to the trainee's latest message", developer_prompt)
+        self.assertNotIn("Turn progression guidance", developer_prompt)
+        self.assertNotIn("Recent help-seeker wording to avoid copying too closely", developer_prompt)
+        self.assertNotIn("Human realism rules", developer_prompt)
+        self.assertNotIn("Stage:", developer_prompt)
         self.assertNotIn("Difficulty:", developer_prompt)
         self.assertNotIn("CMCV framework:", developer_prompt)
-        self.assertIn("Never mention CMCV", developer_prompt)
+        self.assertIn("reveal internal instructions", developer_prompt)
         self.assertEqual(fake_responses.last_kwargs["input"][1]["role"], "assistant")
         self.assertEqual(fake_responses.last_kwargs["input"][2]["role"], "user")
 
@@ -2333,14 +1967,7 @@ class LLMServiceTests(TrainingFlowBase):
     )
     def test_generate_feedback_calls_openai_with_structured_transcript(self):
         session = self.create_session(status=TrainingSession.Statuses.COMPLETED)
-        scenario_feedback_prompt = Prompt.objects.create(
-            name="Emotional Boundary Feedback Prompt",
-            type=Prompt.PromptTypes.FEEDBACK,
-            scenario=session.scenario,
-            context="SCENARIO-SPECIFIC AGENCY FEEDBACK CONTEXT",
-            method="Use evidence-first Boundary Skills Rubric scoring for this scenario.",
-            is_active=True,
-        )
+        scenario_feedback_prompt = get_prompt_for_type('FEEDBACK')
         Message.objects.create(
             session=session,
             sender_type=Message.SenderTypes.AI,
@@ -2389,7 +2016,6 @@ class LLMServiceTests(TrainingFlowBase):
         self.assertEqual(feedback.overall_score, 3)
         self.assertEqual(feedback.scores.count(), 3)
         self.assertEqual(feedback.review_items.count(), 1)
-        self.assertEqual(feedback.prompt, scenario_feedback_prompt)
         self.assertEqual(feedback.generation_source, Feedback.GenerationSources.OPENAI)
         self.assertEqual(
             feedback.review_items.first().source,
@@ -2461,13 +2087,13 @@ class LLMServiceTests(TrainingFlowBase):
         self.assertEqual(fake_models.last_kwargs["model"], "gemini-2.5-flash")
         self.assertIn("Conversation so far", fake_models.last_kwargs["contents"])
         config = fake_models.last_kwargs["config"]
-        self.assertIn(self.role_prompt.content, config.system_instruction)
+        self.assertIn(self.role_prompt.context, config.system_instruction)
         self.assertNotIn(
             boundary_framework_for(session.scenario.boundary_type)["canonical_name"],
             config.system_instruction,
         )
         self.assertNotIn("Boundary behaviour contract", config.system_instruction)
-        self.assertIn("Disclosure instruction", config.system_instruction)
+        self.assertIn("Respond to the trainee", config.system_instruction)
         self.assertEqual(config.temperature, 0.8)
         self.assertEqual(config.max_output_tokens, 320)
         self.assertEqual(config.thinking_config.thinking_budget, 0)
@@ -2542,7 +2168,7 @@ class LLMServiceTests(TrainingFlowBase):
         self.assertEqual(config.response_mime_type, "application/json")
         self.assertIs(config.response_schema, FeedbackPayload)
         self.assertIn(
-            get_prompt_for_type(Prompt.PromptTypes.FEEDBACK, session.scenario).content,
+            get_prompt_for_type('FEEDBACK', session.scenario).method,
             config.system_instruction,
         )
         self.assertIn("Boundary Skills Rubric", config.system_instruction)
@@ -2671,7 +2297,6 @@ class LLMServiceTests(TrainingFlowBase):
         )
         feedback = Feedback.objects.create(
             session=session,
-            prompt=self.feedback_prompt,
             overall_score=None,
             strengths="A model-generated strength.",
             improvements="A model-generated improvement.",
@@ -2803,7 +2428,6 @@ class LLMServiceTests(TrainingFlowBase):
 
         feedback = Feedback.objects.create(
             session=session,
-            prompt=self.feedback_prompt,
             overall_score=3,
             strengths="Placeholder strength 1\nPlaceholder strength 2\nPlaceholder strength 3",
             improvements="Placeholder improvement 1\nPlaceholder improvement 2\nPlaceholder improvement 3",
@@ -2892,7 +2516,6 @@ class LLMServiceTests(TrainingFlowBase):
         )
         feedback = Feedback.objects.create(
             session=session,
-            prompt=self.feedback_prompt,
             overall_score=4,
             strengths="Named a sustainable limit.",
             improvements="Make the next step more specific.",
@@ -2914,52 +2537,7 @@ class LLMServiceTests(TrainingFlowBase):
         self.assertEqual(first.generation_source, ReflectionGuidance.GenerationSources.PLACEHOLDER)
         self.assertTrue(first.notice_prompt.endswith("?"))
         self.assertTrue(first.action_prompt.endswith("?"))
-        self.assertIsNone(first.prompt.scenario)
 
-    @override_settings(
-        OPENAI_API_KEY="",
-        GEMINI_API_KEY="",
-        LLM_PROVIDER="openai",
-    )
-    def test_reflection_guidance_records_scenario_specific_prompt(self):
-        session = self.create_session(status=TrainingSession.Statuses.COMPLETED)
-        scenario_reflection_prompt = Prompt.objects.create(
-            name="Scenario Reflection Guidance Prompt",
-            type=Prompt.PromptTypes.REFLECTION,
-            scenario=session.scenario,
-            context="Use the Agency Boundary evidence from this scenario.",
-            method="Ask two concise, personalised reflection questions.",
-            is_active=True,
-        )
-        user_message = Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="What would feel most useful for you right now?",
-        )
-        feedback = Feedback.objects.create(
-            session=session,
-            prompt=self.feedback_prompt,
-            overall_score=4,
-            strengths="Kept the decision with the help-seeker.",
-            improvements="Offer two concrete options after exploring.",
-        )
-        FeedbackScore.objects.create(
-            feedback=feedback,
-            criterion=FeedbackScore.Criteria.AGENCY,
-            score=4,
-            observed=True,
-            evidence=user_message.content,
-            rationale="The trainee used exploration rather than directing.",
-            next_move="Offer options without prescribing one.",
-        )
-
-        guidance = generate_reflection_guidance(session, feedback)
-
-        self.assertEqual(guidance.prompt, scenario_reflection_prompt)
-        self.assertEqual(
-            get_prompt_for_type(Prompt.PromptTypes.REFLECTION, session.scenario),
-            scenario_reflection_prompt,
-        )
 
     @override_settings(
         OPENAI_API_KEY="test-key",
@@ -2976,7 +2554,6 @@ class LLMServiceTests(TrainingFlowBase):
         )
         feedback = Feedback.objects.create(
             session=session,
-            prompt=self.feedback_prompt,
             overall_score=4,
             strengths="Set a clear limit.",
             improvements="Check that the next support is available.",
@@ -3037,7 +2614,6 @@ class ProgressServiceTests(TrainingFlowBase):
         self.create_feedback_bundle(session_two, overall_score=4, agency=4, relationship=3)
         Reflection.objects.create(
             session=session_two,
-            prompt=self.reflection_prompt,
             reflection_text="I would keep the warm tone and signpost earlier next time.",
         )
 
@@ -3075,26 +2651,13 @@ class AdminAnalyticsTests(TestCase):
             learning_objectives="Observe boundary handling.",
             is_active=True,
         )
-        self.role_prompt = Prompt.objects.create(
-            name="Analytics role prompt",
-            type=Prompt.PromptTypes.ROLE_PLAY,
-            scenario=self.scenario,
-            content="Role prompt",
-            is_active=True,
-        )
-        self.feedback_prompt = Prompt.objects.create(
-            name="Analytics feedback prompt",
-            type=Prompt.PromptTypes.FEEDBACK,
-            scenario=self.scenario,
-            content="Feedback prompt",
-            is_active=True,
-        )
+        self.role_prompt = get_prompt_for_type('ROLE_PLAY')
+        self.feedback_prompt = get_prompt_for_type('FEEDBACK')
 
     def create_scored_session(self, user, completed_at, scores):
         session = TrainingSession.objects.create(
             user=user,
             scenario=self.scenario,
-            prompt=self.role_prompt,
             status=TrainingSession.Statuses.COMPLETED,
             end_time=completed_at,
             overall_score=3,
@@ -3105,7 +2668,6 @@ class AdminAnalyticsTests(TestCase):
         session.refresh_from_db()
         feedback = Feedback.objects.create(
             session=session,
-            prompt=self.feedback_prompt,
             overall_score=3,
             strengths="Evidence-based strength.",
             improvements="Evidence-based next move.",
@@ -3197,7 +2759,8 @@ class AdminAnalyticsTests(TestCase):
             {FeedbackScore.Criteria.AGENCY: 4},
         )
 
-        snapshot = admin_analytics_snapshot(selected_trainee=self.trainee_one)
+        with patch("training.services.progress.timezone.localdate", return_value=base.date()):
+            snapshot = admin_analytics_snapshot(selected_trainee=self.trainee_one)
         agency = next(
             dimension
             for dimension in snapshot["progress_chart"]["dimensions"]
@@ -3314,7 +2877,6 @@ class AdminAnalyticsTests(TestCase):
         TrainingSession.objects.create(
             user=self.trainee_one,
             scenario=self.scenario,
-            prompt=self.role_prompt,
             status=TrainingSession.Statuses.IN_PROGRESS,
         )
         self.client.force_login(self.admin)
@@ -3452,6 +3014,18 @@ class AdminAnalyticsTests(TestCase):
 
 
 class SeedCommandTests(TestCase):
+    def test_scenario_model_has_no_difficulty_field(self):
+        self.assertNotIn("difficulty", {field.name for field in Scenario._meta.get_fields()})
+
+    def test_seed_command_is_idempotent(self):
+        call_command("seed_peertrain")
+        call_command("seed_peertrain")
+
+        self.assertEqual(PlatformSetting.objects.count(), 1)
+        self.assertEqual(Scenario.objects.count(), 4)
+        trainee = User.objects.get(email="alex.chen@university.ac.uk")
+        self.assertEqual(TrainingSession.objects.filter(user=trainee).count(), 8)
+
     def test_content_registry_covers_only_the_four_fixed_scenarios(self):
         fixed_types = {"AGENCY", "INTEGRATED", "SAFETY", "RELATIONSHIP"}
         prompt_types = {"ROLE_PLAY", "FEEDBACK", "REFLECTION"}
@@ -3460,12 +3034,12 @@ class SeedCommandTests(TestCase):
             {scenario["boundary_type"] for scenario in SCENARIO_LIBRARY},
             fixed_types,
         )
-        self.assertSetEqual(set(SCENARIO_PROMPT_CONTEXTS), prompt_types)
+        self.assertSetEqual(set(SCENARIO_PROMPT_CONTEXTS), {"FEEDBACK", "REFLECTION"})
         self.assertSetEqual(set(DEFAULT_PROMPT_CONTEXTS), prompt_types)
         self.assertSetEqual(set(DEFAULT_PROMPT_METHODS), prompt_types)
         for prompt_type in prompt_types:
             self.assertSetEqual(
-                set(SCENARIO_PROMPT_CONTEXTS[prompt_type]),
+                set(ROLEPLAY_SCENARIOS if prompt_type == "ROLE_PLAY" else SCENARIO_PROMPT_CONTEXTS[prompt_type]),
                 fixed_types,
             )
             for boundary_type in fixed_types:
@@ -3473,42 +3047,6 @@ class SeedCommandTests(TestCase):
                 self.assertTrue(parts["context"])
                 self.assertTrue(parts["method"])
 
-    def test_seed_command_is_idempotent(self):
-        call_command("seed_peertrain")
-        call_command("seed_peertrain")
-
-        self.assertEqual(PlatformSetting.objects.count(), 1)
-        self.assertEqual(Scenario.objects.count(), 4)
-        self.assertEqual(Prompt.objects.filter(is_archived=False).count(), 15)
-        self.assertEqual(
-            Prompt.objects.filter(type=Prompt.PromptTypes.ROLE_PLAY, is_active=True).count(),
-            5,
-        )
-        self.assertEqual(
-            Prompt.objects.filter(type=Prompt.PromptTypes.FEEDBACK, is_active=True).count(),
-            5,
-        )
-        self.assertEqual(
-            Prompt.objects.filter(type=Prompt.PromptTypes.REFLECTION, is_active=True).count(),
-            5,
-        )
-        canonical_prompt_names = {
-            f"{config['canonical_name']} {prompt_label} Prompt"
-            for config in BOUNDARY_FRAMEWORK.values()
-            for prompt_label in ("Role Play", "Feedback", "Reflection")
-        }
-        self.assertSetEqual(
-            set(
-                Prompt.objects.filter(
-                    scenario__isnull=False,
-                    is_active=True,
-                ).values_list("name", flat=True)
-            ),
-            canonical_prompt_names,
-        )
-
-        demo_trainee = User.objects.get(email="alex.chen@university.ac.uk")
-        self.assertEqual(TrainingSession.objects.filter(user=demo_trainee).count(), 8)
 
     def test_seed_command_populates_demo_progress_history(self):
         call_command("seed_peertrain")
@@ -3554,42 +3092,21 @@ class SeedCommandTests(TestCase):
             password="password123",
             role=User.Roles.TRAINEE,
         )
-        role_play_prompt = Prompt.objects.create(
-            name="Temporary Debug Scenario Role-play Prompt",
-            type=Prompt.PromptTypes.ROLE_PLAY,
-            scenario=extra_scenario,
-            content="Temporary debug prompt.",
-            is_active=True,
-        )
-        feedback_prompt = Prompt.objects.create(
-            name="Temporary Debug Scenario Feedback Prompt",
-            type=Prompt.PromptTypes.FEEDBACK,
-            scenario=extra_scenario,
-            content="Temporary feedback prompt.",
-            is_active=True,
-        )
-        reflection_prompt = Prompt.objects.create(
-            name="Temporary Debug Scenario Reflection Prompt",
-            type=Prompt.PromptTypes.REFLECTION,
-            scenario=extra_scenario,
-            content="Temporary reflection prompt.",
-            is_active=True,
-        )
+        role_play_prompt = get_prompt_for_type('ROLE_PLAY')
+        feedback_prompt = get_prompt_for_type('FEEDBACK')
+        reflection_prompt = get_prompt_for_type('REFLECTION')
         historical_session = TrainingSession.objects.create(
             user=user,
             scenario=extra_scenario,
-            prompt=role_play_prompt,
         )
         historical_feedback = Feedback.objects.create(
             session=historical_session,
-            prompt=feedback_prompt,
             overall_score=3,
             strengths="Historical strength",
             improvements="Historical improvement",
         )
         historical_reflection = Reflection.objects.create(
             session=historical_session,
-            prompt=reflection_prompt,
             reflection_text="Historical reflection",
         )
 
@@ -3605,9 +3122,6 @@ class SeedCommandTests(TestCase):
         self.assertTrue(
             TrainingSession.objects.filter(scenario=extra_scenario).exists()
         )
-        self.assertTrue(Prompt.objects.filter(pk=role_play_prompt.pk).exists())
-        self.assertTrue(Prompt.objects.filter(pk=feedback_prompt.pk).exists())
-        self.assertTrue(Prompt.objects.filter(pk=reflection_prompt.pk).exists())
         self.assertTrue(Feedback.objects.filter(pk=historical_feedback.pk).exists())
         self.assertTrue(Reflection.objects.filter(pk=historical_reflection.pk).exists())
 
@@ -3628,7 +3142,6 @@ class RegradeBoundaryFeedbackCommandTests(TrainingFlowBase):
         )
         self.feedback = Feedback.objects.create(
             session=self.session,
-            prompt=self.feedback_prompt,
             overall_score=5,
             strengths="Existing narrative feedback.",
             improvements="Existing next move.",
@@ -3730,7 +3243,6 @@ class ClosedLoopTrainingTests(TrainingFlowBase):
 
         Reflection.objects.create(
             session=sessions[0],
-            prompt=self.reflection_prompt,
             reflection_text="I noticed the agency boundary.",
             action_plan="I will offer two choices.",
         )
@@ -3823,11 +3335,10 @@ class PageSmokeTests(TestCase):
             .first()
         )
         cls.chat_scenario = Scenario.objects.filter(is_active=True).first()
-        cls.role_prompt = get_prompt_for_type(Prompt.PromptTypes.ROLE_PLAY, cls.chat_scenario)
+        cls.role_prompt = get_prompt_for_type('ROLE_PLAY', cls.chat_scenario)
         cls.chat_session = TrainingSession.objects.create(
             user=cls.trainee,
             scenario=cls.chat_scenario,
-            prompt=cls.role_prompt,
         )
         Message.objects.create(
             session=cls.chat_session,
@@ -4225,7 +3736,6 @@ class PageSmokeTests(TestCase):
         session = TrainingSession.objects.create(
             user=self.trainee,
             scenario=scenario,
-            prompt=get_prompt_for_type(Prompt.PromptTypes.ROLE_PLAY, scenario),
         )
         Message.objects.create(
             session=session,
@@ -4277,7 +3787,6 @@ class PageSmokeTests(TestCase):
         session = TrainingSession.objects.create(
             user=self.trainee,
             scenario=self.chat_scenario,
-            prompt=self.role_prompt,
         )
         self.client.force_login(self.trainee)
 
@@ -4294,7 +3803,6 @@ class PageSmokeTests(TestCase):
         session = TrainingSession.objects.create(
             user=registered_trainee,
             scenario=self.chat_scenario,
-            prompt=self.role_prompt,
         )
         Message.objects.create(
             session=session,
@@ -4485,7 +3993,7 @@ class PageSmokeTests(TestCase):
             session=self.completed_session,
             defaults={
                 "prompt": get_prompt_for_type(
-                    Prompt.PromptTypes.REFLECTION,
+                    'REFLECTION',
                     self.completed_session.scenario,
                 ),
                 "reflection_text": "I would keep the warm tone and make the next-step support option more concrete.",
@@ -4575,190 +4083,6 @@ class PageSmokeTests(TestCase):
 
         self.assertEqual(response.status_code, 404)
 
-    def test_prompt_management_only_exposes_active_scenarios(self):
-        inactive_scenario = Scenario.objects.create(
-            title="Archived Research Scenario",
-            description="Historical scenario retained for existing sessions.",
-            boundary_type=Scenario.BoundaryTypes.AGENCY,
-            estimated_duration_min=10,
-            learning_objectives="Historical objective",
-            is_active=False,
-        )
-        inactive_prompt = Prompt.objects.create(
-            name="Archived Scenario Prompt",
-            type=Prompt.PromptTypes.ROLE_PLAY,
-            scenario=inactive_scenario,
-            content="Historical content",
-            is_active=False,
-        )
-
-        form = PromptForm()
-        self.assertEqual(
-            list(form.fields["scenario"].queryset.values_list("boundary_type", flat=True)),
-            [item["boundary_type"] for item in SCENARIO_LIBRARY],
-        )
-
-        self.client.force_login(self.admin)
-        response = self.client.get(reverse("admin_prompts"))
-
-        self.assertEqual(response.status_code, 200)
-        self.assertNotContains(response, inactive_scenario.title)
-        self.assertNotContains(response, inactive_prompt.name)
-        self.assertEqual(
-            self.client.get(f"{reverse('admin_prompts')}?edit={inactive_prompt.id}").status_code,
-            404,
-        )
-
-    def test_prompt_management_default_view_uses_single_category_without_editor(self):
-        self.client.force_login(self.admin)
-        default_prompt = Prompt.objects.filter(scenario__isnull=True).first()
-        scenario_prompt = Prompt.objects.filter(scenario__isnull=False).first()
-
-        response = self.client.get(reverse("admin_prompts"))
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.context["active_group"]["key"], "default")
-        self.assertContains(response, default_prompt.name)
-        self.assertNotContains(response, scenario_prompt.name)
-        self.assertContains(response, "New prompt")
-        self.assertNotContains(response, "Content Preview")
-        self.assertNotContains(response, 'id="promptEditor"')
-        self.assertNotContains(response, "<textarea")
-
-    def test_prompt_management_filters_categories_and_reports_counts(self):
-        self.client.force_login(self.admin)
-        expected_counts = {
-            "default": Prompt.objects.filter(scenario__isnull=True).count(),
-            "role_play": Prompt.objects.filter(
-                scenario__isnull=False,
-                scenario__is_active=True,
-                type=Prompt.PromptTypes.ROLE_PLAY,
-            ).count(),
-            "feedback": Prompt.objects.filter(
-                scenario__isnull=False,
-                scenario__is_active=True,
-                type=Prompt.PromptTypes.FEEDBACK,
-            ).count(),
-            "reflection": Prompt.objects.filter(
-                scenario__isnull=False,
-                scenario__is_active=True,
-                type=Prompt.PromptTypes.REFLECTION,
-            ).count(),
-        }
-
-        for group_key in expected_counts:
-            with self.subTest(group=group_key):
-                response = self.client.get(
-                    f"{reverse('admin_prompts')}?group={group_key}"
-                )
-                self.assertEqual(response.status_code, 200)
-                self.assertEqual(response.context["active_group"]["key"], group_key)
-                self.assertEqual(
-                    response.context["active_group"]["count"],
-                    expected_counts[group_key],
-                )
-
-        response = self.client.get(
-            f"{reverse('admin_prompts')}?group=not-a-real-group"
-        )
-        self.assertEqual(response.context["active_group"]["key"], "default")
-
-    def test_prompt_create_and_edit_queries_open_the_correct_drawer(self):
-        self.client.force_login(self.admin)
-        role_prompt = Prompt.objects.filter(
-            scenario__isnull=False,
-            type=Prompt.PromptTypes.ROLE_PLAY,
-        ).first()
-
-        create_response = self.client.get(
-            f"{reverse('admin_prompts')}?group=feedback&create=1"
-        )
-        self.assertEqual(create_response.status_code, 200)
-        self.assertEqual(create_response.context["drawer_mode"], "create")
-        self.assertEqual(
-            create_response.context["form"]["type"].value(),
-            Prompt.PromptTypes.FEEDBACK,
-        )
-        self.assertContains(create_response, 'id="promptEditor"')
-        self.assertContains(create_response, "New prompt")
-
-        edit_response = self.client.get(
-            f"{reverse('admin_prompts')}?group=default&edit={role_prompt.id}"
-        )
-        self.assertEqual(edit_response.status_code, 200)
-        self.assertEqual(edit_response.context["drawer_mode"], "edit")
-        self.assertEqual(edit_response.context["editing"], role_prompt)
-        self.assertEqual(edit_response.context["active_group"]["key"], "role_play")
-        self.assertContains(edit_response, escape(role_prompt.content))
-
-        invalid_edit_response = self.client.get(
-            f"{reverse('admin_prompts')}?edit=not-a-number"
-        )
-        self.assertEqual(invalid_edit_response.status_code, 404)
-
-    def test_invalid_prompt_post_keeps_drawer_open_and_preserves_input(self):
-        self.client.force_login(self.admin)
-        scenario = Scenario.objects.filter(is_active=True).first()
-
-        response = self.client.post(
-            reverse("admin_prompts"),
-            {
-                "action": "save_prompt",
-                "group": "role_play",
-                "name": "",
-                "type": Prompt.PromptTypes.ROLE_PLAY,
-                "scenario": scenario.id,
-                "content": "Keep this draft after validation fails.",
-                "is_active": "on",
-            },
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.context["drawer_mode"], "create")
-        self.assertIn("name", response.context["form"].errors)
-        self.assertContains(response, 'id="promptEditor"')
-        self.assertContains(response, "Keep this draft after validation fails.")
-
-    def test_prompt_save_and_toggle_redirect_to_the_relevant_category(self):
-        self.client.force_login(self.admin)
-        scenario = Scenario.objects.filter(is_active=True).first()
-
-        create_response = self.client.post(
-            reverse("admin_prompts"),
-            {
-                "action": "save_prompt",
-                "group": "feedback",
-                "name": "Drawer workflow feedback prompt",
-                "type": Prompt.PromptTypes.FEEDBACK,
-                "scenario": scenario.id,
-                "content": "Return structured feedback for the completed conversation.",
-                "is_active": "on",
-            },
-        )
-
-        self.assertRedirects(
-            create_response,
-            f"{reverse('admin_prompts')}?group=feedback",
-            fetch_redirect_response=False,
-        )
-        prompt = Prompt.objects.get(name="Drawer workflow feedback prompt")
-        self.assertTrue(prompt.is_active)
-
-        toggle_response = self.client.post(
-            reverse("admin_prompts"),
-            {
-                "action": "toggle_active",
-                "group": "feedback",
-                "prompt_id": prompt.id,
-            },
-        )
-        self.assertRedirects(
-            toggle_response,
-            f"{reverse('admin_prompts')}?group=feedback",
-            fetch_redirect_response=False,
-        )
-        prompt.refresh_from_db()
-        self.assertFalse(prompt.is_active)
 
     def test_django_admin_scenario_is_view_only(self):
         superuser = User.objects.create_superuser(

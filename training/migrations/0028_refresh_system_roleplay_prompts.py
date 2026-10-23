@@ -6,7 +6,7 @@ def refresh_system_roleplay_prompts(apps, schema_editor):
     Prompt = apps.get_model("training", "Prompt")
     Scenario = apps.get_model("training", "Scenario")
 
-    from training.content import default_prompt_parts
+    from training.prompts import default_prompt_parts
 
     global_parts = default_prompt_parts("ROLE_PLAY")
     Prompt.objects.filter(

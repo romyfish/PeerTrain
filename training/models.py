@@ -29,64 +29,6 @@ class Scenario(models.Model):
         return self.title
 
 
-class Prompt(models.Model):
-    FRAMEWORK_VERSION = "CMCV-1.0"
-
-    class PromptTypes(models.TextChoices):
-        ROLE_PLAY = "ROLE_PLAY", "Role-play"
-        FEEDBACK = "FEEDBACK", "Feedback"
-        REFLECTION = "REFLECTION", "Reflection"
-
-    name = models.CharField(max_length=255, unique=True)
-    type = models.CharField(max_length=20, choices=PromptTypes.choices)
-    scenario = models.ForeignKey(
-        "Scenario",
-        on_delete=models.CASCADE,
-        related_name="prompts",
-        blank=True,
-        null=True,
-    )
-    context = models.TextField(blank=True)
-    method = models.TextField()
-    framework_version = models.CharField(max_length=20, default=FRAMEWORK_VERSION)
-    is_active = models.BooleanField(default=False)
-    is_archived = models.BooleanField(default=False)
-
-    class Meta:
-        ordering = ["type", "name"]
-
-    def __init__(self, *args, **kwargs):
-        # Keep historical fixtures and integrations working while content becomes Method.
-        legacy_content = kwargs.pop("content", None)
-        super().__init__(*args, **kwargs)
-        if legacy_content is not None and not self.method:
-            self.method = legacy_content
-
-    @property
-    def content(self):
-        return self.method
-
-    @content.setter
-    def content(self, value):
-        self.method = value
-
-    def save(self, *args, **kwargs):
-        if self.is_archived:
-            self.is_active = False
-        super().save(*args, **kwargs)
-        if self.is_active:
-            queryset = Prompt.objects.filter(type=self.type).exclude(pk=self.pk)
-            if self.scenario_id:
-                queryset = queryset.filter(scenario=self.scenario)
-            else:
-                queryset = queryset.filter(scenario__isnull=True)
-            queryset.update(is_active=False)
-
-    def __str__(self):
-        scope = self.scenario.title if self.scenario_id else "Global"
-        return f"{self.get_type_display()} ({scope}): {self.name}"
-
-
 class TrainingSession(models.Model):
     class Statuses(models.TextChoices):
         IN_PROGRESS = "IN_PROGRESS", "In progress"
@@ -99,11 +41,6 @@ class TrainingSession(models.Model):
         related_name="training_sessions",
     )
     scenario = models.ForeignKey(Scenario, on_delete=models.PROTECT, related_name="sessions")
-    prompt = models.ForeignKey(
-        Prompt,
-        on_delete=models.PROTECT,
-        related_name="training_sessions",
-    )
     start_time = models.DateTimeField(auto_now_add=True)
     end_time = models.DateTimeField(blank=True, null=True)
     status = models.CharField(
@@ -171,11 +108,6 @@ class Feedback(models.Model):
         TrainingSession,
         on_delete=models.CASCADE,
         related_name="feedback",
-    )
-    prompt = models.ForeignKey(
-        Prompt,
-        on_delete=models.PROTECT,
-        related_name="feedback_entries",
     )
     # 没有足够证据时保留为空，避免把“未观察到”误写成 0 分。
     overall_score = models.PositiveSmallIntegerField(
@@ -565,11 +497,6 @@ class Reflection(models.Model):
         on_delete=models.CASCADE,
         related_name="reflection",
     )
-    prompt = models.ForeignKey(
-        Prompt,
-        on_delete=models.PROTECT,
-        related_name="reflections",
-    )
     reflection_text = models.TextField()
     action_plan = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -592,11 +519,6 @@ class ReflectionGuidance(models.Model):
         on_delete=models.CASCADE,
         related_name="reflection_guidance",
     )
-    prompt = models.ForeignKey(
-        Prompt,
-        on_delete=models.PROTECT,
-        related_name="reflection_guidance_entries",
-    )
     notice_prompt = models.TextField()
     action_prompt = models.TextField()
     generation_source = models.CharField(
@@ -604,7 +526,7 @@ class ReflectionGuidance(models.Model):
         choices=GenerationSources.choices,
         default=GenerationSources.PLACEHOLDER,
     )
-    framework_version = models.CharField(max_length=20, default=Prompt.FRAMEWORK_VERSION)
+    framework_version = models.CharField(max_length=20, default="CMCV-1.0")
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

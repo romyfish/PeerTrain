@@ -8,7 +8,6 @@ from training.models import (
     BoundaryEvaluationRun,
     BoundaryTurnEvaluation,
     Message,
-    Prompt,
     Scenario,
     TrainingSession,
 )
@@ -54,16 +53,9 @@ class GEvalPreviewTests(TestCase):
             estimated_duration_min=10,
             learning_objectives="Preserve choice",
         )
-        self.prompt = Prompt.objects.create(
-            name="G-Eval role-play",
-            type=Prompt.PromptTypes.ROLE_PLAY,
-            scenario=self.scenario,
-            method="Stay in role.",
-        )
         self.session = TrainingSession.objects.create(
             user=self.user,
             scenario=self.scenario,
-            prompt=self.prompt,
         )
         Message.objects.create(
             session=self.session,

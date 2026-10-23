@@ -1,3 +1,4 @@
+from training.prompts import opening_message_for
 from datetime import datetime, timedelta
 
 from django.contrib.auth import get_user_model
@@ -5,19 +6,14 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 
 from training.content import (
-    DEFAULT_PROMPT_METHODS,
     SCENARIO_LIBRARY,
-    default_prompt_parts,
-    opening_message_for,
 )
 from training.models import (
     Feedback,
     FeedbackScore,
     Message,
     PlatformSetting,
-    Prompt,
     Reflection,
-    ReflectionGuidance,
     Scenario,
     TrainingSession,
 )
@@ -26,7 +22,7 @@ from training.services.boundary_scoring import RUBRIC_VERSION, conservative_medi
 
 
 class Command(BaseCommand):
-    help = "Seed PeerTrain with demo scenarios, prompts, settings, and sample users."
+    help = "Seed PeerTrain with demo scenarios, settings, and sample users."
 
     def handle(self, *args, **options):
         user_model = get_user_model()
@@ -77,108 +73,6 @@ class Command(BaseCommand):
         Scenario.objects.exclude(id__in=[scenario.id for scenario in scenario_lookup.values()]).update(
             is_active=False
         )
-
-        prompt_lookup = {}
-        for prompt_type in DEFAULT_PROMPT_METHODS:
-            parts = default_prompt_parts(prompt_type)
-            system_name = f"Default {prompt_type.title().replace('_', ' ')} Prompt"
-            custom_active_exists = (
-                Prompt.objects.filter(
-                    type=prompt_type,
-                    scenario__isnull=True,
-                    is_active=True,
-                    is_archived=False,
-                )
-                .exclude(name=system_name)
-                .exists()
-            )
-            prompt, _ = Prompt.objects.update_or_create(
-                name=system_name,
-                defaults={
-                    "type": prompt_type,
-                    "scenario": None,
-                    "context": parts["context"],
-                    "method": parts["method"],
-                    "framework_version": Prompt.FRAMEWORK_VERSION,
-                    "is_archived": False,
-                    "is_active": not custom_active_exists,
-                },
-            )
-            prompt_lookup[(prompt_type, None)] = prompt
-
-        for scenario in scenario_lookup.values():
-            for prompt_type in (
-                Prompt.PromptTypes.ROLE_PLAY,
-                Prompt.PromptTypes.FEEDBACK,
-                Prompt.PromptTypes.REFLECTION,
-            ):
-                prompt_label = prompt_type.title().replace("_", " ")
-                system_names = [
-                    f"{scenario.title} {prompt_label} Prompt",
-                    *[
-                        f"{legacy_title} {prompt_label} Prompt"
-                        for legacy_title in legacy_titles[scenario.boundary_type]
-                    ],
-                ]
-                prompt = Prompt.objects.filter(
-                    scenario=scenario,
-                    type=prompt_type,
-                    name=system_names[0],
-                ).first()
-                if prompt is None:
-                    prompt = (
-                        Prompt.objects.filter(
-                            scenario=scenario,
-                            type=prompt_type,
-                            name__in=system_names[1:],
-                        )
-                        .order_by("id")
-                        .first()
-                    )
-                custom_active_exists = (
-                    Prompt.objects.filter(
-                        scenario=scenario,
-                        type=prompt_type,
-                        is_active=True,
-                    )
-                    .exclude(name__in=system_names)
-                    .exists()
-                )
-                if prompt is None:
-                    prompt = Prompt(
-                        name=system_names[0],
-                        type=prompt_type,
-                        scenario=scenario,
-                    )
-                prompt.name = system_names[0]
-                parts = default_prompt_parts(prompt_type, scenario)
-                prompt.context = parts["context"]
-                prompt.method = parts["method"]
-                prompt.framework_version = Prompt.FRAMEWORK_VERSION
-                prompt.is_archived = False
-                prompt.is_active = not custom_active_exists
-                prompt.save()
-                prompt_lookup[(prompt_type, scenario.boundary_type)] = prompt
-
-                for legacy_prompt in Prompt.objects.filter(
-                    scenario=scenario,
-                    type=prompt_type,
-                    name__in=system_names[1:],
-                ).exclude(pk=prompt.pk):
-                    referenced = (
-                        TrainingSession.objects.filter(prompt=legacy_prompt).exists()
-                        or Feedback.objects.filter(prompt=legacy_prompt).exists()
-                        or Reflection.objects.filter(prompt=legacy_prompt).exists()
-                        or ReflectionGuidance.objects.filter(prompt=legacy_prompt).exists()
-                    )
-                    if referenced:
-                        legacy_prompt.is_active = False
-                        legacy_prompt.is_archived = True
-                        legacy_prompt.save(
-                            update_fields=["is_active", "is_archived"]
-                        )
-                    else:
-                        legacy_prompt.delete()
 
         trainee, _ = user_model.objects.update_or_create(
             email="alex.chen@university.ac.uk",
@@ -242,7 +136,6 @@ class Command(BaseCommand):
                     scenario=scenario,
                     overall_score=overall,
                 )
-            session.prompt = prompt_lookup[("ROLE_PLAY", scenario.boundary_type)]
             session.end_time = start_time + timedelta(minutes=18)
             session.status = TrainingSession.Statuses.COMPLETED
             session.rubric_version = RUBRIC_VERSION
@@ -275,7 +168,6 @@ class Command(BaseCommand):
             feedback, _ = Feedback.objects.update_or_create(
                 session=session,
                 defaults={
-                    "prompt": prompt_lookup[("FEEDBACK", scenario.boundary_type)],
                     "overall_score": overall,
                     "strengths": "Kept the help-seeker involved in the next step\nNamed one boundary without withdrawing support",
                     "improvements": "State the practical limit more explicitly\nOffer one collaborative next action",
@@ -310,7 +202,6 @@ class Command(BaseCommand):
             Reflection.objects.update_or_create(
                 session=session,
                 defaults={
-                    "prompt": prompt_lookup[("REFLECTION", scenario.boundary_type)],
                     "reflection_text": (
                         "I noticed that the response needed a clearer boundary while keeping "
                         "the help-seeker involved."

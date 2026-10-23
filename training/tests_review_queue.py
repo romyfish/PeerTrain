@@ -6,7 +6,6 @@ from training.models import (
     BoundaryEvaluationRun,
     BoundaryTurnEvaluation,
     Message,
-    Prompt,
     Scenario,
     TrainingSession,
 )
@@ -34,16 +33,9 @@ class ScoreReviewQueueTests(TestCase):
             estimated_duration_min=10,
             learning_objectives="Preserve agency.",
         )
-        self.prompt = Prompt.objects.create(
-            name="Review queue prompt",
-            type=Prompt.PromptTypes.ROLE_PLAY,
-            scenario=self.scenario,
-            method="Stay in role.",
-        )
         self.session = TrainingSession.objects.create(
             user=self.trainee,
             scenario=self.scenario,
-            prompt=self.prompt,
         )
         self.help_seeker_message = Message.objects.create(
             session=self.session,

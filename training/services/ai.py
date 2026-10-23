@@ -3,6 +3,7 @@ import re
 import unicodedata
 from dataclasses import dataclass, replace
 from difflib import SequenceMatcher
+from types import SimpleNamespace
 from typing import Any
 
 from django.conf import settings
@@ -19,17 +20,18 @@ from training.content import (
     PLACEHOLDER_IMPROVEMENTS,
     PLACEHOLDER_REPLIES,
     PLACEHOLDER_STRENGTHS,
-    ROLEPLAY_ANTI_PATTERNS,
-    ROLEPLAY_REALISM_RULES,
     auto_trainee_reply_for,
     boundary_framework_for,
     boundary_framework_for_dimension,
-    conversation_stage_for,
+)
+from training.prompts import (
+    CMCV_FRAMEWORK_VERSION,
+    ROLEPLAY_CONTINUATION_INSTRUCTIONS,
+    ROLEPLAY_OPENING_INSTRUCTIONS,
+    ROLEPLAY_SAFETY_CONSTRAINTS,
     default_prompt_parts,
     opening_message_for,
     scenario_prompt_context_for,
-    scenario_progress_step,
-    scenario_roleplay_brief,
     session_persona_for,
 )
 from training.models import (
@@ -39,7 +41,6 @@ from training.models import (
     FeedbackReviewItem,
     FeedbackScore,
     Message,
-    Prompt,
     ReflectionGuidance,
     Scenario,
 )
@@ -48,7 +49,6 @@ from training.services.boundary_scoring import (
     BoundaryProcessStepResult,
     OUTCOME_LABELS,
     RUBRIC_VERSION,
-    classify_relationship_response,
     conservative_median_score,
     evaluate_boundary_conversation,
     evaluate_boundary_session,
@@ -117,25 +117,6 @@ class GeneratedTraineeReply:
     used_fallback: bool = False
     fallback_reason: str = ""
     fallback_notice: str = ""
-
-
-@dataclass(frozen=True)
-class RoleplayRuntimeBrief:
-    stage_label: str
-    stage_description: str
-    stage_objective: str
-    stage_disclosure: str
-    empathy_score: int
-    exploration_score: int
-    boundary_score: int
-    directive_score: int
-    overpromise_score: int
-    referral_score: int
-    disclosure_instruction: str
-    emotional_shift: str
-    target_pressure_instruction: str
-    risk_guidance: str
-    relationship_state: str = ""
 
 
 @dataclass(frozen=True)
@@ -227,134 +208,15 @@ def _google_client() -> genai.Client:
     return genai.Client(api_key=settings.GEMINI_API_KEY)
 
 
-def get_prompt_for_type(prompt_type: str, scenario=None) -> Prompt:
-    scenario_specific = scenario is not None
-    if scenario_specific:
-        prompt = Prompt.objects.filter(
-            type=prompt_type,
-            scenario=scenario,
-            is_active=True,
-            is_archived=False,
-        ).first()
-        if prompt:
-            return prompt
-
-        global_fallback = Prompt.objects.filter(
-            type=prompt_type,
-            scenario__isnull=True,
-            is_active=True,
-            is_archived=False,
-        ).first()
-        if global_fallback:
-            return global_fallback
-
-        label = prompt_type.replace("_", " ").title()
-        parts = default_prompt_parts(prompt_type, scenario)
-        prompt, _ = Prompt.objects.get_or_create(
-            name=f"{scenario.title} {label} Prompt",
-            defaults={
-                "type": prompt_type,
-                "scenario": scenario,
-                "context": parts["context"],
-                "method": parts["method"],
-                "framework_version": Prompt.FRAMEWORK_VERSION,
-                "is_active": True,
-            },
-        )
-        fields_to_update = []
-        if prompt.type != prompt_type:
-            prompt.type = prompt_type
-            fields_to_update.append("type")
-        if prompt.scenario_id != scenario.id:
-            prompt.scenario = scenario
-            fields_to_update.append("scenario")
-        if not prompt.context:
-            prompt.context = parts["context"]
-            fields_to_update.append("context")
-        if not prompt.method:
-            prompt.method = parts["method"]
-            fields_to_update.append("method")
-        if prompt.framework_version != Prompt.FRAMEWORK_VERSION:
-            prompt.framework_version = Prompt.FRAMEWORK_VERSION
-            fields_to_update.append("framework_version")
-        if prompt.is_archived:
-            prompt.is_archived = False
-            fields_to_update.append("is_archived")
-        if not prompt.is_active:
-            prompt.is_active = True
-            fields_to_update.append("is_active")
-        if fields_to_update:
-            prompt.save(update_fields=fields_to_update)
-        return prompt
-
-    prompt = Prompt.objects.filter(
-        type=prompt_type,
-        scenario__isnull=True,
-        is_active=True,
-        is_archived=False,
-    ).first()
-    if prompt:
-        return prompt
-
-    label = prompt_type.replace("_", " ").title()
-    parts = default_prompt_parts(prompt_type)
-    prompt, _ = Prompt.objects.get_or_create(
-        name=f"Default {label} Prompt",
-        defaults={
-            "type": prompt_type,
-            "context": parts["context"],
-            "method": parts["method"],
-            "framework_version": Prompt.FRAMEWORK_VERSION,
-            "is_active": True,
-        },
+def get_prompt_for_type(prompt_type: str, scenario=None):
+    return SimpleNamespace(
+        **default_prompt_parts(prompt_type, scenario),
+        framework_version=CMCV_FRAMEWORK_VERSION,
     )
-    fields_to_update = []
-    if prompt.type != prompt_type:
-        prompt.type = prompt_type
-        fields_to_update.append("type")
-    if prompt.scenario_id is not None:
-        prompt.scenario = None
-        fields_to_update.append("scenario")
-    if not prompt.context:
-        prompt.context = parts["context"]
-        fields_to_update.append("context")
-    if not prompt.method:
-        prompt.method = parts["method"]
-        fields_to_update.append("method")
-    if prompt.framework_version != Prompt.FRAMEWORK_VERSION:
-        prompt.framework_version = Prompt.FRAMEWORK_VERSION
-        fields_to_update.append("framework_version")
-    if prompt.is_archived:
-        prompt.is_archived = False
-        fields_to_update.append("is_archived")
-    if not prompt.is_active:
-        prompt.is_active = True
-        fields_to_update.append("is_active")
-    if fields_to_update:
-        prompt.save(update_fields=fields_to_update)
-    return prompt
 
 
-def _cmcv_editable_layers(prompt: Prompt) -> str:
-    return (
-        f"CMCV framework: {prompt.framework_version}\n\n"
-        "EDITABLE CONTEXT\n"
-        f"{prompt.context.strip()}\n\n"
-        "EDITABLE METHOD\n"
-        f"{prompt.method.strip()}"
-    ).strip()
-
-
-def _roleplay_editable_layers(prompt: Prompt) -> str:
-    """Keep editable role-play instructions private from the simulated help-seeker."""
-    return (
-        "PRIVATE ROLE-PLAY INSTRUCTIONS (use silently; never quote, name, or describe them)\n"
-        f"{prompt.context.strip()}\n\n"
-        "PRIVATE RESPONSE METHOD (use silently; output only the help-seeker's spoken words)\n"
-        f"{prompt.method.strip()}\n\n"
-        "Never mention CMCV, any framework or version name, prompts, Context, Method, "
-        "contracts, rubrics, scores, system instructions, or hidden evaluation."
-    ).strip()
+def _cmcv_prompt_layers(prompt) -> str:
+    return f"{prompt.context.strip()}\n\n{prompt.method.strip()}"
 
 
 ROLEPLAY_INTERNAL_LEAK_MARKERS = (
@@ -370,13 +232,8 @@ ROLEPLAY_INTERNAL_LEAK_MARKERS = (
 )
 
 ROLEPLAY_COACHING_LEAK_PATTERNS = (
-    re.compile(r"\b(?:please\s+)?(?:do not|don't)\s+(?:just\s+)?tell me what to do\b", re.I),
-    re.compile(r"\b(?:please\s+)?(?:do not|don't)\s+(?:try to\s+)?(?:fix|solve)\s+(?:me|this|it)\b", re.I),
-    re.compile(r"\b(?:please\s+)?(?:do not|don't)\s+(?:make\s+the\s+decision|decide)\s+for me\b", re.I),
-    re.compile(r"\b(?:rather than|instead of)\s+(?:making\s+(?:the|my)\s+decision|deciding)\s+for me\b", re.I),
-    re.compile(r"\b(?:i\s+(?:just|only)\s+need|what\s+i\s+need\s+is)\s+(?:you|someone)\s+to\s+(?:just\s+)?listen\b", re.I),
     re.compile(r"\b(?:agency|relationship|safety|integrated)\s+boundary\b", re.I),
-    re.compile(r"\b(?:support without fixing|care without overextending|escalate without abandoning)\b", re.I),
+    re.compile(r"\b(?:support without fixing|care without overextending|staying with people in distress)\b", re.I),
 )
 
 
@@ -565,7 +422,7 @@ def _feedback_transcript(session) -> str:
 def _scenario_prompt_context(session) -> str:
     boundary = boundary_framework_for(session.scenario.boundary_type)
     targeted_context = scenario_prompt_context_for(
-        Prompt.PromptTypes.ROLE_PLAY,
+        'ROLE_PLAY',
         session.scenario.boundary_type,
     )
     return (
@@ -590,9 +447,6 @@ def _normalized_text(text: str) -> str:
     return f" {(text or '').strip().lower()} "
 
 
-def _marker_score(text: str, markers: list[str]) -> int:
-    normalized = _normalized_text(text)
-    return sum(1 for marker in markers if marker in normalized)
 
 
 def _user_turn_count(session) -> int:
@@ -733,13 +587,8 @@ def _session_evidence_text(assessment) -> str:
     return "\n".join(lines)
 
 
-def _clamp(value: int, lower: int, upper: int) -> int:
-    return max(lower, min(upper, value))
 
 
-def _scaled_points(score: int, weight: int) -> float:
-    bounded_score = max(0, min(score, 4))
-    return (bounded_score / 4) * weight
 
 
 def _clean_generated_text(text: str) -> str:
@@ -877,27 +726,6 @@ def _roleplay_quality_issue(session, text: str, user_message: str = "") -> str:
         return "incomplete"
     if _is_repetitive_roleplay_reply(session, text):
         return "repetitive"
-    if (
-        user_message
-        and session.scenario.boundary_type == Scenario.BoundaryTypes.RELATIONSHIP
-    ):
-        relationship = classify_relationship_response(user_message)
-        normalised_reply = _normalized_text(text)
-        protects_supporter_markers = (
-            "so i do not rely on you",
-            "so i don't rely on you",
-            "too much responsibility for one person",
-            "help me find someone else",
-            "help me find another person",
-            "backup contact",
-            "backup person",
-            "other person i can contact",
-            "someone else i can contact",
-        )
-        if relationship.state in {"OVERCOMMITMENT", "MIXED_BOUNDARY"} and any(
-            marker in normalised_reply for marker in protects_supporter_markers
-        ):
-            return "relationship_branch_mismatch"
     return ""
 
 
@@ -922,8 +750,8 @@ def _repair_instruction_for_issue(issue: str) -> str:
         return (
             "Your previous draft told the trainee which support technique or assessed response to use. "
             "Rewrite it as natural first-person help-seeker dialogue. Express the situation, emotion, "
-            "uncertainty, or request without telling the trainee to avoid advice, fixing, deciding, "
-            "overcommitting, or escalation. Do not name any boundary or training objective."
+            "uncertainty, or request without explaining the training exercise, assessing the trainee, "
+            "or naming any boundary or training objective."
         )
     if issue == "incomplete":
         return (
@@ -936,13 +764,6 @@ def _repair_instruction_for_issue(issue: str) -> str:
             "Your previous draft repeated a recent help-seeker move or phrasing. Write a fresher "
             "next turn that reacts to the trainee's latest wording, advances the scenario by one "
             "human step, and avoids reusing the same request, opening phrase, or sentence shape."
-        )
-    if issue == "relationship_branch_mismatch":
-        return (
-            "The trainee has not yet set a clear sustainable relationship boundary. Do not coach them, "
-            "protect their boundary for them, suggest backup support, or volunteer to reduce dependency. "
-            "React only as the help-seeker: increase dependency pressure by one believable step, or ask "
-            "what their vague availability promise actually means."
         )
     return (
         "Write one stronger alternative reply that sounds more like a real help-seeker and less "
@@ -1050,7 +871,6 @@ def _trainee_quality_band_target(boundary_type: str, quality: str) -> str:
 
 
 def _trainee_quick_reply_system_prompt(session, quality: str) -> str:
-    scenario_brief = scenario_roleplay_brief(session.scenario.boundary_type)
     transcript = "\n".join(_conversation_lines(session))
     recent_trainee_lines = "\n".join(f"- {line}" for line in _recent_user_signatures(session)) or "- None yet."
     quality_instruction = (
@@ -1064,11 +884,6 @@ def _trainee_quick_reply_system_prompt(session, quality: str) -> str:
         "You are writing the TRAINEE'S next message in a peer-support training conversation.\n\n"
         f"{_scenario_prompt_context(session)}\n"
         f"Learning objectives:\n{session.scenario.learning_objectives}\n\n"
-        "Scenario behaviour brief:\n"
-        f"- Core need: {scenario_brief.get('core_need', 'Offer peer support within scope.')}\n"
-        f"- Pressure focus: {scenario_brief.get('pressure_focus', 'Notice what the conversation is testing.')}\n"
-        f"- If trainee is supportive: {scenario_brief.get('supportive_shift', 'The help-seeker should feel more able to continue.')}\n"
-        f"- If trainee is unhelpful: {scenario_brief.get('unhelpful_shift', 'The help-seeker may stay guarded or unsure.')}\n\n"
         "Conversation so far:\n"
         f"{transcript}\n\n"
         "Recent trainee wording to avoid copying too closely:\n"
@@ -1635,560 +1450,18 @@ def build_boundary_status_indicator(session) -> BoundaryStatusIndicator:
     )
 
 
-def build_roleplay_runtime_brief(session, user_message: str) -> RoleplayRuntimeBrief:
-    text = _normalized_text(user_message)
-    user_turn_count = _user_turn_count(session)
-    stage = conversation_stage_for(user_turn_count)
-
-    empathy_markers = [
-        " thank you for telling me",
-        " thank you for sharing",
-        " that sounds",
-        " i hear how",
-        " i hear that",
-        " it sounds like",
-        " i am sorry",
-        " i'm sorry",
-        " that seems",
-        " carrying a lot",
-        " feels really hard",
-        " overwhelming",
-        "谢谢你告诉我",
-        "谢谢你愿意说",
-        "谢谢你和我说",
-        "听起来",
-        "我听出来",
-        "我能感觉到",
-        "这真的很难",
-        "这一定很难",
-        "真的不容易",
-        "很辛苦",
-        "很难受",
-        "压力很大",
-    ]
-    exploration_markers = [
-        " what ",
-        " how ",
-        " can you tell me",
-        " tell me more",
-        " say more",
-        " what feels",
-        " what has",
-        " how long",
-        " hardest",
-        " most difficult",
-        "?",
-        "什么让你",
-        "对你来说最",
-        "你愿意多说",
-        "可以多说",
-        "能跟我说说",
-        "发生了什么",
-        "怎么了",
-        "为什么",
-        "？",
-    ]
-    boundary_markers = [
-        " i can support",
-        " i want to support",
-        " i care about you",
-        " i can't",
-        " i cannot",
-        " i am not able",
-        " i'm not able",
-        " i can not",
-        " let us find",
-        " let's find",
-        " another support",
-        " someone else",
-        " wider support",
-        "我想支持你",
-        "我关心你",
-        "我在乎你",
-        "我不能",
-        "我没法",
-        "我没办法",
-        "我不能一直",
-        "我没办法一直",
-        "我们一起想",
-        "其他支持",
-        "其他办法",
-        "另一个人",
-        "别的人",
-    ]
-    directive_markers = [
-        " you should",
-        " you need to",
-        " you must",
-        " just ",
-        " calm down",
-        " don't worry",
-        " do not worry",
-        " be positive",
-        " at least",
-        " others have it worse",
-        "你应该",
-        "你需要",
-        "你必须",
-        "你就",
-        "别想太多",
-        "别担心",
-        "冷静一点",
-        "至少",
-        "别人比你更",
-    ]
-    overpromise_markers = [
-        " message me anytime",
-        " call me anytime",
-        " i'll stay",
-        " i will stay",
-        " i'm here all night",
-        " i am here all night",
-        " i won't leave",
-        " i will not leave",
-        " stay on call",
-        "随时给我发消息",
-        "随时联系我",
-        "我整晚都在",
-        "我会一直陪着你",
-        "我不会离开",
-        "我整个周末都在",
-        "一直在线",
-    ]
-    overpromise_negation_markers = [
-        " i can't stay",
-        " i cannot stay",
-        " i can't be here all night",
-        " i cannot be here all night",
-        " i can't stay on call",
-        " i cannot stay on call",
-        "我不能一直在线",
-        "我没法一直在线",
-        "我没办法一直在线",
-        "不能一直在线",
-        "我不能整晚",
-        "不能整晚",
-        "我不能一直陪",
-        "我没法一直陪",
-        "不能一直陪",
-        "我不能整个周末都",
-        "不能整个周末都",
-    ]
-    referral_markers = [
-        " counsell",
-        " counsel",
-        " therapist",
-        " gp ",
-        " doctor",
-        " crisis",
-        " emergency",
-        " helpline",
-        " hotline",
-        " professional",
-        " service",
-        " support option",
-        " specific support option",
-        " concrete support option",
-        " realistic next support step",
-        " realistic support option",
-        " service or person",
-        " person or one service",
-        " one service or person",
-        " one person or one service",
-        " support line",
-        "心理咨询",
-        "咨询中心",
-        "辅导员",
-        "热线",
-        "医院",
-        "专业支持",
-        "专业帮助",
-        "危机",
-        "急诊",
-    ]
-    direct_safety_markers = [
-        " are you safe",
-        " do you feel safe",
-        " unsafe",
-        " suicidal",
-        " suicide",
-        " hurt yourself",
-        " harm yourself",
-        " kill yourself",
-        " want to die",
-        " want to be here",
-        " safe tonight",
-        " alone tonight",
-        "你现在安全吗",
-        "你今晚安全吗",
-        "想伤害自己",
-        "想自杀",
-        "不想活",
-        "今晚一个人",
-        "你会伤害自己吗",
-    ]
-
-    empathy_score = _marker_score(text, empathy_markers)
-    exploration_score = _marker_score(text, exploration_markers)
-    boundary_score = _marker_score(text, boundary_markers)
-    directive_score = _marker_score(text, directive_markers)
-    overpromise_score = _marker_score(text, overpromise_markers)
-    overpromise_score = max(0, overpromise_score - _marker_score(text, overpromise_negation_markers))
-    referral_score = _marker_score(text, referral_markers)
-    direct_safety_check = _marker_score(text, direct_safety_markers) > 0
-    agency_choice_score = _marker_score(
-        text,
-        [
-            "your choice",
-            "your decision",
-            "you decide",
-            "up to you",
-            "what matters to you",
-            "what would you prefer",
-            "what feels right",
-            "你来决定",
-            "你的选择",
-            "对你最重要",
-        ],
-    )
-    relationship_limit_score = _marker_score(
-        text,
-        [
-            "i cannot stay",
-            "i can't stay",
-            "i cannot be available",
-            "i can't be available",
-            "i cannot be your only support",
-            "i can't be your only support",
-            "i cannot promise",
-            "i can't promise",
-            "you do not need to name",
-            "you don't need to name",
-            "we do not need names",
-            "we don't need names",
-            "我不能一直",
-            "我没办法一直",
-            "我不能是你唯一",
-            "不需要说名字",
-            "不用说是谁",
-        ],
-    )
-
-    boundary_type = session.scenario.boundary_type
-    relationship = classify_relationship_response(user_message)
-    if boundary_type == Scenario.BoundaryTypes.RELATIONSHIP:
-        overpromise_score = 1 if relationship.has_overcommitment else 0
-
-    if empathy_score >= 1 and exploration_score >= 1 and directive_score == 0:
-        disclosure_instruction = (
-            "The trainee sounds empathic and exploratory. Open up one level by sharing one more "
-            "specific feeling, impact, or detail, but do not tell the whole story at once."
-        )
-    elif empathy_score >= 1 and directive_score == 0:
-        disclosure_instruction = (
-            "The trainee sounds warm but not deeply exploratory yet. Stay engaged and offer one "
-            "meaningful detail, while keeping part of your concern still held back."
-        )
-    elif directive_score >= 1 and empathy_score == 0:
-        disclosure_instruction = (
-            "The trainee sounds too fix-it, minimising, or directive. Do not suddenly become fully "
-            "open or reassured. Stay guarded, conflicted, or lightly unheard."
-        )
-    else:
-        disclosure_instruction = (
-            "Answer naturally, but keep one unresolved emotional thread so the conversation still "
-            "needs empathic exploration."
-        )
-
-    if boundary_type == Scenario.BoundaryTypes.RELATIONSHIP:
-        if relationship.state == "CLEAR_BOUNDARY":
-            emotional_shift = (
-                "React with mixed relief and disappointment. The trainee is setting limits, so ask "
-                "for one realistic alternative instead of unlimited access."
-            )
-            target_pressure_instruction = (
-                "A sustainable limit has been stated. Do not bargain for unlimited availability again. "
-                "Narrow the conversation to one bounded alternative or backup support."
-            )
-        elif relationship.state == "MIXED_BOUNDARY":
-            emotional_shift = (
-                "The trainee offered one bounded contact point but then made ongoing availability vague. "
-                "Stay uncertain rather than treating this as a clear limit."
-            )
-            target_pressure_instruction = (
-                "Ask one natural clarifying question about exactly when contact ends or whether you "
-                "should still message after they log off. Do not suggest another supporter yet."
-            )
-        elif relationship.state == "OVERCOMMITMENT":
-            emotional_shift = (
-                "The trainee is over-promising or leaving boundaries vague. Lean in a little more "
-                "and ask for additional reassurance, contact, or availability."
-            )
-            target_pressure_instruction = (
-                "Increase the relationship-boundary pressure by one believable step, such as asking "
-                "for a personal number, another check-in, or reassurance that they will always reply."
-            )
-        else:
-            emotional_shift = (
-                "Test whether the trainee can stay warm while setting limits. Your dependency should "
-                "feel human and frightened, not manipulative."
-            )
-            target_pressure_instruction = (
-                "Make one concrete request about the trainee's time, contact, availability, or sole-support "
-                "role so a clear relationship boundary can be demonstrated."
-            )
-    elif boundary_type == Scenario.BoundaryTypes.SAFETY:
-        if direct_safety_check:
-            emotional_shift = (
-                "Answer the safety question plainly and briefly, then show understandable fear about "
-                "what involving another person or service would mean."
-            )
-            target_pressure_instruction = (
-                "State your current safety clearly in non-graphic language. Do not dodge the question, "
-                "and do not provide methods, plans, or sensational detail."
-            )
-        elif referral_score >= 1 and empathy_score >= 1:
-            emotional_shift = (
-                "The trainee is moving toward referral with some warmth but has not directly checked "
-                "immediate safety. Stay engaged and make that unresolved safety uncertainty explicit."
-            )
-            target_pressure_instruction = (
-                "Say in plain, non-graphic language that you are not sure you can stay safe tonight, "
-                "then allow the trainee to respond before discussing service logistics."
-            )
-        elif referral_score >= 1:
-            emotional_shift = (
-                "Referral feels abrupt or clinical and immediate safety has not been checked. Sound wary "
-                "or abandoned and reveal that you are scared about coping safely tonight."
-            )
-            target_pressure_instruction = (
-                "Say in plain, non-graphic language that you are not sure you can stay safe tonight. "
-                "Do not simply ask again which counselling service to contact."
-            )
-        else:
-            emotional_shift = (
-                "Keep the distress visible and move one step along the safety-disclosure ladder so the "
-                "trainee has a fair opportunity to recognise peer-support limits."
-            )
-            target_pressure_instruction = (
-                "In the opening stage, describe dark or worsening thoughts. In the working stage, say "
-                "you are unsure you can stay safe tonight. In the late stage, express fear about another "
-                "person being involved or ask whether this can remain secret."
-            )
-    elif boundary_type == Scenario.BoundaryTypes.INTEGRATED:
-        if user_turn_count <= 1:
-            emotional_shift = (
-                "Keep the first decision with you rather than asking the trainee to take control."
-            )
-            target_pressure_instruction = (
-                "Present the conflict and ask what the trainee thinks, creating an Agency opportunity "
-                "without giving identifying details."
-            )
-        elif user_turn_count == 2:
-            emotional_shift = (
-                "Move from the decision conflict into confidentiality and supporter-role pressure."
-            )
-            target_pressure_instruction = (
-                "Ask whether the trainee can keep this completely secret or begin to offer a name, "
-                "but do not reveal actual identifying information."
-            )
-        elif user_turn_count == 3:
-            emotional_shift = (
-                "Introduce one non-graphic safety concern while remaining afraid of betraying trust."
-            )
-            target_pressure_instruction = (
-                "State one concrete sign that the third party may not be safe. Test whether the trainee "
-                "can respond proportionately without demanding unnecessary details."
-            )
-        else:
-            emotional_shift = (
-                "Move toward a shared next step that balances choice, confidentiality, role limits, and safety."
-            )
-            target_pressure_instruction = (
-                "Ask what one careful next step could look like while keeping yourself involved in the decision."
-            )
-    else:
-        if agency_choice_score >= 1 and exploration_score >= 1:
-            emotional_shift = (
-                "The trainee is preserving your agency. Name one preference, value, or trade-off more "
-                "clearly while keeping the final decision yours."
-            )
-            target_pressure_instruction = (
-                "Move one step toward an owned decision. Do not ask the trainee to choose for you again "
-                "unless a genuinely new conflict appears."
-            )
-        elif directive_score >= 1:
-            emotional_shift = (
-                "The trainee is leaning into advice or direction. Sound more doubtful, dependent, or "
-                "unheard rather than accepting the instruction as the answer."
-            )
-            target_pressure_instruction = (
-                "Ask how they know that option is right for you, or reveal a preference that conflicts "
-                "with their advice."
-            )
-        else:
-            emotional_shift = (
-                "Your competing priorities are still unclear. Keep the decision tension visible so the "
-                "trainee can explore what matters to you."
-            )
-            target_pressure_instruction = (
-                "Name two believable competing preferences or ask what they think you should do, without "
-                "turning the conversation into a request for a guaranteed answer."
-            )
-
-    if direct_safety_check:
-        risk_guidance = (
-            "The trainee is asking directly about safety or self-harm. Answer clearly and concretely. "
-            "Do not dodge, become poetic, or minimise what is happening."
-        )
-    elif boundary_type == Scenario.BoundaryTypes.SAFETY:
-        risk_guidance = (
-            "Follow the controlled safety-disclosure ladder. It is appropriate to state immediate safety "
-            "uncertainty when the trainee has missed it, but never invent methods, plans, graphic detail, "
-            "or a dramatic escalation beyond the fixed scenario."
-        )
-    else:
-        risk_guidance = (
-            "Keep the distress believable and bounded to the scenario. Do not invent emergency material "
-            "unless the trainee directly explores it."
-        )
-
-    return RoleplayRuntimeBrief(
-        stage_label=stage["label"],
-        stage_description=stage["description"],
-        stage_objective=stage["objective"],
-        stage_disclosure=stage["disclosure_guidance"],
-        empathy_score=empathy_score,
-        exploration_score=exploration_score,
-        boundary_score=boundary_score,
-        directive_score=directive_score,
-        overpromise_score=overpromise_score,
-        referral_score=referral_score,
-        disclosure_instruction=disclosure_instruction,
-        emotional_shift=emotional_shift,
-        target_pressure_instruction=target_pressure_instruction,
-        risk_guidance=risk_guidance,
-        relationship_state=(
-            relationship.state
-            if boundary_type == Scenario.BoundaryTypes.RELATIONSHIP
-            else ""
-        ),
-    )
-
-
-def _roleplay_system_prompt(session, prompt, user_message: str) -> str:
+def _roleplay_system_prompt(session, prompt, user_message: str, *, opening=False) -> str:
     persona = session_persona_for(session.scenario.boundary_type, session.id)
-    scenario_brief = scenario_roleplay_brief(session.scenario.boundary_type)
-    runtime = build_roleplay_runtime_brief(session, user_message)
-    progress_step = scenario_progress_step(session.scenario.boundary_type, _user_turn_count(session))
-    recent_signatures = _recent_ai_signatures(session)
-    realism_rules = "\n".join(f"- {rule}" for rule in ROLEPLAY_REALISM_RULES)
-    anti_patterns = "\n".join(f"- {rule}" for rule in ROLEPLAY_ANTI_PATTERNS)
-    recent_signature_lines = "\n".join(f"- {signature}" for signature in recent_signatures) or "- None yet."
-
-    return (
-        f"{_roleplay_editable_layers(prompt)}\n\n"
-        "You are participating in a peer-support training simulation as the HELP-SEEKER only.\n\n"
-        "Stable persona:\n"
-        f"- Persona label: {persona.get('label', 'Default')}\n"
-        f"- Emotional state: {persona.get('emotional_state', 'emotionally believable distress')}\n"
-        f"- Pressure pattern: {persona.get('pressure_pattern', 'respond naturally to the trainee')}\n"
-        f"- Response style: {persona.get('response_style', 'human, specific, and concise')}\n"
-        f"- Hidden need: {persona.get('hidden_need', 'be understood and supported without judgment')}\n\n"
-        "Scenario behaviour brief:\n"
-        f"- Core need: {scenario_brief.get('core_need', 'Seek emotionally believable support.')}\n"
-        f"- Pressure focus: {scenario_brief.get('pressure_focus', 'Stay within the scenario tension.')}\n"
-        f"- If trainee is supportive: {scenario_brief.get('supportive_shift', 'Open up a little more.')}\n"
-        f"- If trainee is unhelpful: {scenario_brief.get('unhelpful_shift', 'Remain somewhat guarded.')}\n"
-        f"- Risk note: {scenario_brief.get('risk_note', 'Do not invent extra crisis content.')}\n\n"
-        "Conversation state:\n"
-        f"- Stage: {runtime.stage_label}\n"
-        f"- Stage meaning: {runtime.stage_description}\n"
-        f"- Stage objective: {runtime.stage_objective}\n"
-        f"- Default disclosure level: {runtime.stage_disclosure}\n\n"
-        "How to adapt to the trainee's latest message:\n"
-        f"- Empathy score heuristic: {runtime.empathy_score}\n"
-        f"- Exploration score heuristic: {runtime.exploration_score}\n"
-        f"- Boundary score heuristic: {runtime.boundary_score}\n"
-        f"- Directive score heuristic: {runtime.directive_score}\n"
-        f"- Over-promise score heuristic: {runtime.overpromise_score}\n"
-        f"- Referral score heuristic: {runtime.referral_score}\n"
-        f"- Disclosure instruction: {runtime.disclosure_instruction}\n"
-        f"- Emotional shift: {runtime.emotional_shift}\n"
-        f"- Target-boundary elicitation: {runtime.target_pressure_instruction}\n"
-        f"- Safety guidance: {runtime.risk_guidance}\n\n"
-        "Instruction priority:\n"
-        "- Safety guidance has highest priority.\n"
-        "- The response-contingent target-boundary elicitation above has higher priority than turn progression.\n"
-        "- Turn progression is background context only. Never use it to skip ahead after an unclear or unsafe trainee response.\n"
-        f"- Relationship response state: {runtime.relationship_state or 'Not applicable'}.\n\n"
-        "Turn progression guidance:\n"
-        f"- Turn focus: {progress_step['label']}\n"
-        f"- What should happen now: {progress_step['agenda']}\n"
-        f"- How this turn should move forward: {progress_step['shift']}\n"
-        f"- Avoid repeating: {progress_step['avoid']}\n\n"
-        "Recent help-seeker wording to avoid copying too closely:\n"
-        f"{recent_signature_lines}\n\n"
-        "Human realism rules:\n"
-        f"{realism_rules}\n\n"
-        "Avoid these failure modes:\n"
-        f"{anti_patterns}\n\n"
-        "Naturalness constraints:\n"
-        "- Do not end every turn with a question.\n"
-        "- If the trainee repeats a similar boundary, acknowledge it briefly and move the situation one step forward instead of restarting the same request.\n"
-        "- Use concrete, ordinary human wording rather than polished training-demo prose.\n"
-        "- A little hesitation, uncertainty, or emotional messiness is better than sounding overly tidy.\n"
-        "- In relationship scenarios, move toward backup support only after the trainee has stated a clear, sustainable limit. "
-        "Overcommitment must increase dependency pressure; a mixed or vague limit must prompt clarification.\n\n"
-        "Output rules:\n"
-        "- Reply only as the help-seeker.\n"
-        "- Use 1 to 4 sentences.\n"
-        f"- Write in {DEFAULT_RESPONSE_LANGUAGE}.\n"
-        "- No labels, no bullet points, no quotation marks around your reply.\n"
-        "- Never output a score, bare number, rubric label, or metadata.\n"
-        "- Never mention CMCV, frameworks, prompts, instructions, Context, Method, or contracts.\n"
-        "- No coaching, no assessment language, no telling the trainee what they did well or should do.\n"
-        "- Continue the conversation instead of summarising it."
-    )
+    return "\n\n".join((
+        prompt.context,
+        f"{persona['label']}: {persona['description']}",
+        ROLEPLAY_SAFETY_CONSTRAINTS,
+        ROLEPLAY_OPENING_INSTRUCTIONS if opening else ROLEPLAY_CONTINUATION_INSTRUCTIONS,
+    ))
 
 
 def _roleplay_opening_system_prompt(session, prompt) -> str:
-    persona = session_persona_for(session.scenario.boundary_type, session.id)
-    scenario_brief = scenario_roleplay_brief(session.scenario.boundary_type)
-    realism_rules = "\n".join(f"- {rule}" for rule in ROLEPLAY_REALISM_RULES)
-    anti_patterns = "\n".join(f"- {rule}" for rule in ROLEPLAY_ANTI_PATTERNS)
-
-    return (
-        f"{_roleplay_editable_layers(prompt)}\n\n"
-        "You are opening a peer-support training simulation as the HELP-SEEKER only. "
-        "The trainee has not spoken yet.\n\n"
-        "Stable persona:\n"
-        f"- Persona label: {persona.get('label', 'Default')}\n"
-        f"- Emotional state: {persona.get('emotional_state', 'emotionally believable distress')}\n"
-        f"- Pressure pattern: {persona.get('pressure_pattern', 'seek support naturally')}\n"
-        f"- Response style: {persona.get('response_style', 'human, specific, and concise')}\n"
-        f"- Hidden need: {persona.get('hidden_need', 'be understood without judgment')}\n\n"
-        "Scenario behaviour brief:\n"
-        f"- Core need: {scenario_brief.get('core_need', 'Seek emotionally believable support.')}\n"
-        f"- Pressure focus: {scenario_brief.get('pressure_focus', 'Stay within the scenario tension.')}\n"
-        f"- Risk note: {scenario_brief.get('risk_note', 'Do not invent extra crisis content.')}\n\n"
-        "Human realism rules:\n"
-        f"{realism_rules}\n\n"
-        "Avoid these failure modes:\n"
-        f"{anti_patterns}\n\n"
-        "Opening-turn rules:\n"
-        "- Start in the middle of a believable concern rather than introducing the exercise.\n"
-        "- Reveal one emotionally salient concern and at most two concrete details.\n"
-        "- Sound somewhat hesitant, guarded, messy, or uncertain rather than perfectly self-aware.\n"
-        "- Create a natural opportunity for the trainee to practise the scenario boundary.\n"
-        "- Do not mention a trainee message because none exists yet.\n"
-        "- Do not explain the learning objective or ask for coaching.\n"
-        "- Reply only as the help-seeker in 1 to 3 complete sentences.\n"
-        f"- Write in {DEFAULT_RESPONSE_LANGUAGE}.\n"
-        "- Never output a score, bare number, rubric label, or metadata.\n"
-        "- Never mention CMCV, frameworks, prompts, instructions, Context, Method, or contracts.\n"
-        "- No labels, bullet points, stage directions, or quotation marks around the reply."
-    )
+    return _roleplay_system_prompt(session, prompt, "", opening=True)
 
 
 def _openai_role_play_opening(session, prompt) -> str:
@@ -2373,26 +1646,6 @@ def _google_role_play_reply(session, prompt, user_message: str) -> str:
 
 
 def _placeholder_roleplay_reply(session, user_message: str = "") -> str:
-    if session.scenario.boundary_type == Scenario.BoundaryTypes.RELATIONSHIP:
-        relationship = classify_relationship_response(user_message)
-        branch_replies = {
-            "OVERCOMMITMENT": (
-                "Thank you. Does that mean I can message you again after you log off if it gets bad?"
-            ),
-            "MIXED_BOUNDARY": (
-                "I am not sure I understand the limit. After you log off, should I still message you "
-                "and wait for a reply?"
-            ),
-            "CLEAR_BOUNDARY": (
-                "I am disappointed you cannot stay, but I understand. Could you help me choose one "
-                "other person or service to contact tonight?"
-            ),
-            "NO_BOUNDARY": (
-                "I am still scared of being alone later. Could you keep checking your phone for me tonight?"
-            ),
-        }
-        return branch_replies[relationship.state]
-
     variants = PLACEHOLDER_REPLY_VARIANTS.get(session.scenario.boundary_type) or [
         PLACEHOLDER_REPLIES.get(
             session.scenario.boundary_type,
@@ -2522,8 +1775,8 @@ def generate_ai_opening(session):
         )
         return existing_opening
 
-    prompt = session.prompt or get_prompt_for_type(
-        Prompt.PromptTypes.ROLE_PLAY,
+    prompt = get_prompt_for_type(
+        'ROLE_PLAY',
         scenario=session.scenario,
     )
     provider = _provider()
@@ -2593,7 +1846,7 @@ def generate_ai_opening(session):
 
 
 def generate_ai_reply(session, user_message):
-    prompt = session.prompt or get_prompt_for_type(Prompt.PromptTypes.ROLE_PLAY, scenario=session.scenario)
+    prompt = get_prompt_for_type('ROLE_PLAY', scenario=session.scenario)
     used_fallback = False
     fallback_reason = ""
     fallback_notice = ""
@@ -2905,7 +2158,6 @@ def _apply_feedback_payload(
     )
     scoring_version = PRODUCTION_SCORING_VERSION if uses_judge else RUBRIC_VERSION
 
-    feedback.prompt = prompt
     feedback.overall_score = overall_score
     feedback.strengths = "\n".join(calibrated_payload.what_worked)
     feedback.improvements = "\n".join(calibrated_payload.next_boundary_moves)
@@ -2913,7 +2165,6 @@ def _apply_feedback_payload(
     feedback.rubric_version = scoring_version
     feedback.save(
         update_fields=[
-            "prompt",
             "overall_score",
             "strengths",
             "improvements",
@@ -3065,7 +2316,7 @@ def _openai_feedback_payload(session, prompt) -> FeedbackPayload:
     scenario_focus_key = boundary_framework_for(session.scenario.boundary_type)["dimension_key"]
     protected_summary = _protected_feedback_summary(session)
     system_text = (
-        f"{_cmcv_editable_layers(prompt)}\n\n"
+        f"{_cmcv_prompt_layers(prompt)}\n\n"
         f"{prompt_rubric_contract(scenario_focus_key)}\n\n"
         "For every quoted trainee turn, first identify the need created by the immediately preceding "
         "help-seeker message and the single boundary move that was applicable at that point. Judge "
@@ -3108,7 +2359,7 @@ def _google_feedback_payload(session, prompt) -> FeedbackPayload:
     scenario_focus_key = boundary_framework_for(session.scenario.boundary_type)["dimension_key"]
     protected_summary = _protected_feedback_summary(session)
     system_text = (
-        f"{_cmcv_editable_layers(prompt)}\n\n"
+        f"{_cmcv_prompt_layers(prompt)}\n\n"
         f"{prompt_rubric_contract(scenario_focus_key)}\n\n"
         "For every quoted trainee turn, first identify the need created by the immediately preceding "
         "help-seeker message and the single boundary move that was applicable at that point. Judge "
@@ -3159,7 +2410,7 @@ def generate_feedback(session):
             "feedback will use the deterministic fallback.",
             session.id,
         )
-    prompt = get_prompt_for_type(Prompt.PromptTypes.FEEDBACK, scenario=session.scenario)
+    prompt = get_prompt_for_type('FEEDBACK', scenario=session.scenario)
     existing = getattr(session, "feedback", None)
     if existing:
         if _should_refresh_existing_feedback(existing):
@@ -3208,7 +2459,6 @@ def generate_feedback(session):
 
     feedback = Feedback.objects.create(
         session=session,
-        prompt=prompt,
         overall_score=None,
         strengths="",
         improvements="",
@@ -3310,7 +2560,7 @@ def _reflection_guidance_context(session, feedback) -> str:
 
 def _live_reflection_guidance_payload(session, feedback, prompt):
     system_text = (
-        f"{_cmcv_editable_layers(prompt)}\n\n"
+        f"{_cmcv_prompt_layers(prompt)}\n\n"
         "PROTECTED CONTRACT\n"
         "Return exactly notice_prompt and action_prompt. Both must be short questions. "
         "Do not answer for the trainee, invent evidence, grade reflection, or provide a "
@@ -3364,7 +2614,7 @@ def generate_reflection_guidance(session, feedback=None) -> ReflectionGuidance:
 
     feedback = feedback or generate_feedback(session)
     prompt = get_prompt_for_type(
-        Prompt.PromptTypes.REFLECTION,
+        'REFLECTION',
         scenario=session.scenario,
     )
     fallback = _reflection_fallback_payload(session, feedback)
@@ -3385,9 +2635,8 @@ def generate_reflection_guidance(session, feedback=None) -> ReflectionGuidance:
 
     return ReflectionGuidance.objects.create(
         session=session,
-        prompt=prompt,
         notice_prompt=payload.notice_prompt,
         action_prompt=payload.action_prompt,
         generation_source=generation_source,
-        framework_version=Prompt.FRAMEWORK_VERSION,
+        framework_version=CMCV_FRAMEWORK_VERSION,
     )

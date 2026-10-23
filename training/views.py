@@ -10,6 +10,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
+from django.views.decorators.http import require_safe
 
 from accounts.decorators import role_required
 from training.content import (
@@ -17,11 +18,15 @@ from training.content import (
     boundary_framework_for,
     scenario_map_by_boundary,
 )
+from training.prompts import (
+    DEFAULT_PROMPT_CONTEXTS, DEFAULT_PROMPT_METHODS, ROLEPLAY_SCENARIOS,
+    ROLEPLAY_OPENING_INSTRUCTIONS, ROLEPLAY_CONTINUATION_INSTRUCTIONS,
+    scenario_prompt_context_for,
+)
 from training.forms import (
     BoundaryTurnReviewForm,
     ChatMessageForm,
     PlatformSettingForm,
-    PromptForm,
     ReflectionForm,
 )
 from training.models import (
@@ -32,7 +37,6 @@ from training.models import (
     FeedbackScore,
     Message,
     PlatformSetting,
-    Prompt,
     Reflection,
     Scenario,
     TrainingSession,
@@ -46,7 +50,6 @@ from training.services.ai import (
     generate_demo_trainee_reply,
     generate_feedback,
     generate_reflection_guidance,
-    get_prompt_for_type,
 )
 from training.services.boundary_scoring import RUBRIC_VERSION
 from training.services.geval import ensure_reliable_geval_run
@@ -132,10 +135,6 @@ def _app_context(request, current_page, title, is_admin=False):
 
 def _scenario_meta_map():
     return scenario_map_by_boundary()
-
-
-def _active_prompt(prompt_type, scenario=None):
-    return get_prompt_for_type(prompt_type, scenario=scenario)
 
 
 def _process_chat_turn(
@@ -363,11 +362,9 @@ def scenarios_view(request):
 
     if request.method == "POST":
         scenario = get_object_or_404(Scenario, pk=request.POST.get("scenario_id"), is_active=True)
-        role_play_prompt = _active_prompt(Prompt.PromptTypes.ROLE_PLAY, scenario=scenario)
         session = TrainingSession.objects.create(
             user=request.user,
             scenario=scenario,
-            prompt=role_play_prompt,
         )
         # 先进入聊天页，再由页面异步请求 AI 开场，避免模型延迟阻塞页面跳转。
         return redirect("chat", session_id=session.id)
@@ -389,7 +386,7 @@ def scenarios_view(request):
 def chat_view(request, session_id):
     is_ajax = _is_ajax_chat_request(request)
     session = get_object_or_404(
-        TrainingSession.objects.select_related("scenario", "prompt", "user"),
+        TrainingSession.objects.select_related("scenario", "user"),
         pk=session_id,
         user=request.user,
     )
@@ -679,17 +676,12 @@ def session_review_view(request, session_id):
         return redirect("chat", session_id=session.id)
     feedback = generate_feedback(session)
     reflection_guidance = generate_reflection_guidance(session, feedback)
-    reflection_prompt = _active_prompt(
-        Prompt.PromptTypes.REFLECTION,
-        session.scenario,
-    )
     reflection = getattr(session, "reflection", None)
     if request.method == "POST":
         form = ReflectionForm(request.POST, instance=reflection)
         if form.is_valid():
             reflection = form.save(commit=False)
             reflection.session = session
-            reflection.prompt = reflection_prompt
             reflection.save()
             recalculate_user_progress(request.user)
             messages.success(request, "Reflection saved to your history.")
@@ -875,7 +867,7 @@ def admin_dashboard_view(request):
         "in_progress_sessions": TrainingSession.objects.filter(
             status=TrainingSession.Statuses.IN_PROGRESS
         ).count(),
-        "active_prompts": Prompt.objects.filter(is_active=True).count(),
+        "active_prompts": len(DEFAULT_PROMPT_CONTEXTS) * (1 + len(ROLEPLAY_SCENARIOS)),
         "completed_sessions": TrainingSession.objects.filter(status="COMPLETED").count(),
         "avg_score": round(
             Feedback.objects.aggregate(avg=Avg("overall_score"))["avg"] or 0,
@@ -1226,197 +1218,35 @@ def admin_users_view(request):
     return render(request, "admin/users.html", context)
 
 
-PROMPT_GROUPS = (
-    {
-        "key": "default",
-        "title": "Global fallback prompts",
-        "tab_label": "Global fallbacks",
-        "description": "Global fallbacks used when a scenario-specific prompt is unavailable.",
-        "prompt_type": None,
-    },
-    {
-        "key": "role_play",
-        "title": "Role-play prompts",
-        "tab_label": "Role-play",
-        "description": "Control how the AI help-seeker behaves in each training scenario.",
-        "prompt_type": Prompt.PromptTypes.ROLE_PLAY,
-    },
-    {
-        "key": "feedback",
-        "title": "Feedback prompts",
-        "tab_label": "Feedback",
-        "description": "Shape structured scoring and post-conversation feedback.",
-        "prompt_type": Prompt.PromptTypes.FEEDBACK,
-    },
-    {
-        "key": "reflection",
-        "title": "Reflection prompts",
-        "tab_label": "Reflection",
-        "description": "Guide the trainee's post-session reflective practice.",
-        "prompt_type": Prompt.PromptTypes.REFLECTION,
-    },
-)
-
-PROTECTED_PROMPT_CONTRACTS = {
-    Prompt.PromptTypes.ROLE_PLAY: (
-        "The model must remain the first-person AI help-seeker, preserve its role state, "
-        "respond to the latest trainee message, and output only natural dialogue. Role "
-        "switching, scores, coaching language, metadata, and repeated wording are rejected."
-    ),
-    Prompt.PromptTypes.FEEDBACK: (
-        "The Boundary Skills Rubric fixes the Agency, Relationship, and Safety order and 1-5 anchors. "
-        "Each trainee reply is evaluated only against the move made relevant by the preceding "
-        "help-seeker message. Session feedback accumulates genuine opportunities and later repairs; "
-        "it never requires all three process moves in every reply. Observed scores require evidence "
-        "verified against a real trainee message."
-    ),
-    Prompt.PromptTypes.REFLECTION: (
-        "The output must contain exactly two personalised questions grounded in verified "
-        "session evidence. It must not write the trainee's answer or grade reflection quality."
-    ),
-}
-
-
-def _prompt_group_key(prompt):
-    if prompt.scenario_id is None:
-        return "default"
-    return {
-        Prompt.PromptTypes.ROLE_PLAY: "role_play",
-        Prompt.PromptTypes.FEEDBACK: "feedback",
-        Prompt.PromptTypes.REFLECTION: "reflection",
-    }[prompt.type]
-
-
-def _admin_prompts_group_url(group_key):
-    return f"{reverse('admin_prompts')}?group={group_key}"
-
-
-def _visible_prompt_or_404(queryset, raw_prompt_id):
-    try:
-        prompt_id = int(raw_prompt_id)
-    except (TypeError, ValueError) as error:
-        raise Http404("Prompt not found.") from error
-    return get_object_or_404(queryset, pk=prompt_id)
-
-
 @login_required
 @role_required("ADMIN")
+@require_safe
 def admin_prompts_view(request):
-    visible_prompts = Prompt.objects.filter(
-        Q(scenario__isnull=True) | Q(scenario__is_active=True)
-    ).filter(is_archived=False).select_related("scenario")
-    valid_group_keys = {group["key"] for group in PROMPT_GROUPS}
-    requested_group = (
-        request.POST.get("group")
-        if request.method == "POST"
-        else request.GET.get("group")
-    )
-    active_group_key = (
-        requested_group if requested_group in valid_group_keys else "default"
-    )
-    edit_instance = None
-    form = None
-    drawer_mode = None
-
-    if request.method == "GET" and request.GET.get("edit"):
-        edit_instance = _visible_prompt_or_404(visible_prompts, request.GET["edit"])
-        active_group_key = _prompt_group_key(edit_instance)
-        form = PromptForm(instance=edit_instance)
-        drawer_mode = "edit"
-    elif request.method == "GET" and request.GET.get("create") == "1":
-        initial_type = next(
-            (
-                group["prompt_type"]
-                for group in PROMPT_GROUPS
-                if group["key"] == active_group_key
-            ),
-            None,
-        )
-        form = PromptForm(initial={"type": initial_type} if initial_type else None)
-        drawer_mode = "create"
-
-    if request.method == "POST":
-        action = request.POST.get("action")
-        if action == "toggle_active":
-            prompt = _visible_prompt_or_404(
-                visible_prompts,
-                request.POST.get("prompt_id"),
-            )
-            prompt.is_active = not prompt.is_active
-            prompt.save()
-            messages.success(request, f"Updated {prompt.name}.")
-            return redirect(_admin_prompts_group_url(_prompt_group_key(prompt)))
-
-        if request.POST.get("prompt_id"):
-            edit_instance = _visible_prompt_or_404(
-                visible_prompts,
-                request.POST["prompt_id"],
-            )
-        form = PromptForm(request.POST, instance=edit_instance)
-        drawer_mode = "edit" if edit_instance else "create"
-        if form.is_valid():
-            saved_prompt = form.save()
-            messages.success(request, "Prompt saved successfully.")
-            return redirect(
-                _admin_prompts_group_url(_prompt_group_key(saved_prompt))
-            )
-
-    prompts = list(visible_prompts)
-    scenario_order = {
-        row["boundary_type"]: index for index, row in enumerate(SCENARIO_LIBRARY)
-    }
-    prompts.sort(
-        key=lambda prompt: (
-            prompt.type,
-            -1 if prompt.scenario_id is None else scenario_order.get(
-                prompt.scenario.boundary_type,
-                len(scenario_order),
-            ),
-            prompt.name,
-        )
-    )
-    grouped_prompts = {group["key"]: [] for group in PROMPT_GROUPS}
-    for prompt in prompts:
-        grouped_prompts[_prompt_group_key(prompt)].append(prompt)
-
     prompt_groups = []
-    for definition in PROMPT_GROUPS:
-        group = dict(definition)
-        group["prompts"] = grouped_prompts[group["key"]]
-        group["count"] = len(group["prompts"])
-        group["is_active"] = group["key"] == active_group_key
-        prompt_groups.append(group)
-    active_group = next(group for group in prompt_groups if group["is_active"])
-    selected_prompt_type = None
-    if form:
-        selected_prompt_type = (
-            form.data.get("type")
-            if form.is_bound
-            else form.initial.get("type")
-            or getattr(form.instance, "type", None)
-        )
-
+    for key, label in (("ROLE_PLAY", "Role-play"), ("FEEDBACK", "Feedback"), ("REFLECTION", "Reflection")):
+        shared = DEFAULT_PROMPT_CONTEXTS[key] + "\n\n" + DEFAULT_PROMPT_METHODS[key]
+        if key == "ROLE_PLAY":
+            shared += "\n\n" + ROLEPLAY_OPENING_INSTRUCTIONS + "\n\n" + ROLEPLAY_CONTINUATION_INSTRUCTIONS
+        prompts = [{"name": "Shared instructions", "content": shared}]
+        for boundary in ("AGENCY", "RELATIONSHIP", "SAFETY", "INTEGRATED"):
+            content = scenario_prompt_context_for(key, boundary)
+            if key == "ROLE_PLAY":
+                scenario = ROLEPLAY_SCENARIOS[boundary]
+                content += "\n\nPersona variations:\n" + "\n".join(
+                    f"{p['label']}: {p['description']}" for p in scenario["persona_variations"]
+                )
+                content += "\n\nOpening fallbacks:\n" + "\n".join(scenario["opening_variants"])
+            prompts.append({"name": boundary, "content": content})
+        prompt_groups.append({
+            "key": key.lower(), "title": f"{label} prompts", "tab_label": label,
+            "description": "Code-managed in training/prompts.py. Read-only in Admin.",
+            "prompts": prompts, "count": len(prompts),
+        })
+    selected = request.GET.get("group", "role_play")
+    active_group = next((g for g in prompt_groups if g["key"] == selected), prompt_groups[0])
+    active_group["is_active"] = True
     context = _app_context(request, "admin_prompts", "Admin Prompt Management", is_admin=True)
-    context.update(
-        {
-            "form": form,
-            "prompt_groups": prompt_groups,
-            "active_group": active_group,
-            "drawer_mode": drawer_mode,
-            "editing": edit_instance,
-            "framework_version": Prompt.FRAMEWORK_VERSION,
-            "protected_contract": PROTECTED_PROMPT_CONTRACTS.get(
-                selected_prompt_type,
-                "Select a prompt type to view its protected runtime contract.",
-            ),
-            "protected_contracts": PROTECTED_PROMPT_CONTRACTS,
-            "drawer_return_selector": (
-                f"#prompt-edit-{edit_instance.id}"
-                if edit_instance
-                else "#prompt-new-button"
-            ),
-        }
-    )
+    context.update(prompt_groups=prompt_groups, active_group=active_group)
     return render(request, "admin/prompts.html", context)
 
 

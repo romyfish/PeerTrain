@@ -1,13 +1,9 @@
 from django import forms
-from django.db.models import Case, IntegerField, Value, When
 
-from .content import SCENARIO_LIBRARY
 from .models import (
     BoundaryTurnEvaluation,
     PlatformSetting,
-    Prompt,
     Reflection,
-    Scenario,
 )
 
 
@@ -69,45 +65,6 @@ class ReflectionForm(StyledModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._set_widget_classes()
-
-
-class PromptForm(StyledModelForm):
-    class Meta:
-        model = Prompt
-        fields = ["name", "type", "scenario", "context", "method", "is_active"]
-        widgets = {
-            "context": forms.Textarea(attrs={"rows": 6}),
-            "method": forms.Textarea(attrs={"rows": 10}),
-        }
-
-    def __init__(self, *args, **kwargs):
-        if args and args[0] is not None and "method" not in args[0] and "content" in args[0]:
-            legacy_data = args[0].copy()
-            legacy_data["method"] = legacy_data.get("content", "")
-            args = (legacy_data, *args[1:])
-        super().__init__(*args, **kwargs)
-        self._set_widget_classes()
-        self.fields["scenario"].required = False
-        self.fields["is_active"].label = "Active prompt"
-        scenario_order = Case(
-            *[
-                When(boundary_type=item["boundary_type"], then=Value(index))
-                for index, item in enumerate(SCENARIO_LIBRARY)
-            ],
-            default=Value(len(SCENARIO_LIBRARY)),
-            output_field=IntegerField(),
-        )
-        self.fields["scenario"].queryset = Scenario.objects.filter(
-            is_active=True
-        ).order_by(scenario_order, "id")
-        self.fields["scenario"].help_text = "Leave blank for a global fallback prompt."
-        self.fields["context"].help_text = (
-            "Define the role, setting, boundary focus, and information the model receives."
-        )
-        self.fields["method"].help_text = (
-            "Define how the model should perform the task. Protected scoring, safety, and "
-            "validation rules are added by the application at runtime."
-        )
 
 
 class PlatformSettingForm(StyledModelForm):

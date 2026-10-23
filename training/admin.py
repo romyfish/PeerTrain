@@ -8,7 +8,6 @@ from .models import (
     FeedbackScore,
     Message,
     PlatformSetting,
-    Prompt,
     Reflection,
     ReflectionGuidance,
     Scenario,
@@ -38,13 +37,6 @@ class ScenarioAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
-
-
-@admin.register(Prompt)
-class PromptAdmin(admin.ModelAdmin):
-    list_display = ("name", "type", "framework_version", "is_active", "is_archived")
-    list_filter = ("type", "framework_version", "is_active", "is_archived")
-    search_fields = ("name", "context", "method")
 
 
 class FeedbackScoreInline(admin.TabularInline):
