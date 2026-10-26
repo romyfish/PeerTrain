@@ -1,8 +1,8 @@
 # PeerTrain — Prompt Simplification
 
-> **Prompt content reference.** This file records the current Role-play, Feedback and Reflection Prompt wording. The application should use Python prompt definitions at runtime; this Markdown file is for maintaining and reviewing their content.
+> **Prompt content reference.** The application should use Python prompt definitions at runtime; this Markdown file is for maintaining and reviewing their content.
 >
-> **Status:** Role-play prompts are the current simplified version. Feedback and Reflection are preserved from the existing database and will be revised alongside the scoring and reflection redesign.
+> **Status:** Feedback and Reflection are preserved from the existing database and will be revised alongside the scoring and reflection redesign.
 
 ## 1. Shared Role-play Prompt
 
