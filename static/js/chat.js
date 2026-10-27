@@ -631,6 +631,29 @@
   window.requestAnimationFrame(() => {
     scrollToLatest("auto");
     updateJumpToLatest();
-    if (needsOpening) window.setTimeout(startRoleplay, 80);
+    const personaForm = document.querySelector("[data-persona-form]");
+    if (personaForm) {
+      const modal = new bootstrap.Modal(document.getElementById("persona-selection"));
+      modal.show();
+      personaForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const button = personaForm.querySelector("button[type=submit]");
+        button.disabled = true;
+        try {
+          const data = createActionData("select_persona");
+          data.set("persona", document.getElementById("student-mode").checked ? "student" : "pso");
+          const character = await requestChatJson(data);
+          pendingTemplate.content.querySelector(".peertrain-chat-speaker").textContent = `${character.name} (AI-simulated)`;
+          pendingTemplate.content.querySelector(".peertrain-ai-avatar").src = character.portrait;
+          modal.hide();
+          await startRoleplay();
+        } catch (error) {
+          const errorBox = personaForm.querySelector("[data-persona-error]");
+          errorBox.textContent = error.message;
+          errorBox.hidden = false;
+          button.disabled = false;
+        }
+      });
+    } else if (needsOpening) window.setTimeout(startRoleplay, 80);
   });
 })();

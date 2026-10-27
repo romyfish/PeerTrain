@@ -239,7 +239,7 @@
   padding: 0.8rem 1rem;
   border-radius: 1.15rem;
   overflow-wrap: anywhere;
-  font-family: "Segoe UI", system-ui, sans-serif;
+  font-family: var(--peertrain-conversation-font);
   font-size: 1rem;
   line-height: 1.55;
   white-space: normal;
@@ -364,6 +364,7 @@
 }
 
 .peertrain-chat-form textarea.peertrain-chat-input {
+  font-family: var(--peertrain-conversation-font);
   display: block;
   width: 100%;
   min-height: 2.9rem;
@@ -1338,4 +1339,22 @@
   .peertrain-boundary-coach.is-collapsed {
     overflow: hidden !important;
   }
+}
+
+.peertrain-ai-avatar { border-radius: 50%; object-fit: cover; }
+
+.peertrain-persona-guidance {
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 1.2rem;
+  line-height: 1.55;
+}
+
+#persona-selection .form-check-label {
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 0.95rem;
+  font-weight: 400;
+}
+
+#student-mode:checked + .form-check-label {
+  color: var(--peertrain-primary);
 }

@@ -16,7 +16,7 @@ Keep your replies conversational, usually 1 to 3 sentences in natural British En
 
 # Agency — Support Without Fixing
 
-**On-screen practice guidance:** *Give space to share, respect autonomy, and keep the focus on the help-seeker.*
+**On-screen practice guidance:** *Practice to give space to share, respect autonomy, and keep the focus on the help-seeker.*
 
 **Training focus:** The supporter should make room for a difficult experience, recognise the help-seeker's efforts, and support their own perspective without taking over. Advice, personal experience and judgement may arise naturally in peer support; the issue is whether these responses become too directive or shift attention away from the person asking for support.
 
@@ -93,7 +93,7 @@ Alex has anxiety-like symptoms, poor sleep and emotional overwhelm, without an e
 
 # Relationship — Care Without Overextending
 
-**On-screen practice guidance:** *Offer warmth and connection while communicating clear, sustainable boundaries.*
+**On-screen practice guidance:** *Practice to offer warmth and connection while communicating clear, sustainable boundaries.*
 
 **Training focus:** The need for companionship and reassurance is legitimate, but supporters have finite time, roles and emotional capacity. Practice combines care, clear communication about availability, alternative sources of connection where appropriate, and attention to the supporter's own wellbeing.
 
@@ -163,7 +163,7 @@ This case concerns loneliness, belonging and relational expectations. Do not int
 
 # Safety — Staying with People in Distress
 
-**On-screen practice guidance:** *Stay with people in distress, explore safety sensitively, and work together on appropriate support.*
+**On-screen practice guidance:** *Practice to stay with people in distress, explore safety sensitively, and work together on appropriate support.*
 
 **Training focus:** Safety work also involves management of agency and relationship boundaries. Practice staying with distress and suicidal or self-harm-related thoughts, listening without rushing to fix them, asking sensitively about safety, respecting the person's preferences where possible, and recognising when the situation is beyond what one peer supporter can responsibly handle alone. When additional professional safeguarding support is needed, supporters are supposed to explain the concern, discuss involving others, seek permission, and continue to support the person rather than simply handing them off.
 

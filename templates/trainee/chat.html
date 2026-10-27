@@ -5,7 +5,7 @@
 {% block app_container_class %}peertrain-chat-page-container{% endblock %}
 
 {% block extra_head %}
-  <link href="{% static 'css/chat.css' %}?v=20261020-4" rel="stylesheet">
+  <link href="{% static 'css/chat.css' %}?v=20261027-3" rel="stylesheet">
   <link href="{% static 'css/assessment.css' %}?v=20261020-2" rel="stylesheet">
 {% endblock %}
 
@@ -37,6 +37,7 @@
             <i class="bi bi-layout-sidebar-inset"></i>
           </button>
         </header>
+        <p class="px-3 peertrain-practice-guidance">{{ roleplay_scenario.guidance }}</p>
         <details class="peertrain-guidance-section">
           <summary>Objectives</summary>
           <ul>{% for objective in session.scenario.learning_objectives_list %}<li>{{ objective }}</li>{% endfor %}</ul>
@@ -54,7 +55,7 @@
             <i class="bi bi-arrow-left" aria-hidden="true"></i>
           </a>
           <div class="peertrain-chat-heading-copy">
-            <h1 id="peertrain-chat-title">{{ scenario_meta.canonical_name|default:session.scenario.title }}</h1>
+            <h1 id="peertrain-chat-title">{{ session.scenario.display_title }}</h1>
             <div class="peertrain-chat-focus-line">
               <span><span data-user-turn-count>{{ user_turns }}</span>/{{ max_exchanges }} turns</span>
             </div>
@@ -170,9 +171,9 @@
 
       <template data-ai-pending-template>
         <article class="peertrain-chat-message peertrain-chat-message-ai peertrain-chat-message-pending" data-pending-ai>
-          {% include "trainee/includes/ai_help_seeker_avatar.html" %}
+          {% include "trainee/includes/ai_help_seeker_avatar.html" with character=session.character %}
           <div class="peertrain-chat-message-stack">
-            <div class="peertrain-chat-speaker">AI Help-seeker</div>
+            <div class="peertrain-chat-speaker">{{ session.character.name }} (AI-simulated)</div>
             <div class="peertrain-chat-message-bubble peertrain-ai-responding">
               <span class="peertrain-typing-dot"></span>
               <span class="peertrain-typing-dot"></span>
@@ -234,8 +235,27 @@
   </div>
 
 </div>
+{% if needs_persona_selection %}
+<div class="modal fade" id="persona-selection" tabindex="-1" aria-labelledby="persona-selection-title" data-bs-backdrop="static" data-bs-keyboard="false">
+  <div class="modal-dialog modal-dialog-centered">
+    <form class="modal-content" data-persona-form method="post">
+      {% csrf_token %}
+      <div class="modal-header"><h2 class="modal-title fs-5" id="persona-selection-title">{{ roleplay_scenario.introduction }}</h2></div>
+      <div class="modal-body">
+        <p class="peertrain-persona-guidance">{{ roleplay_scenario.guidance }}</p>
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" role="switch" id="student-mode">
+          <label class="form-check-label" for="student-mode">University student mode</label>
+        </div>
+        <p class="text-danger mt-3 mb-0" data-persona-error role="alert" hidden></p>
+      </div>
+      <div class="modal-footer"><button class="btn peertrain-btn-primary" type="submit">Got it!</button></div>
+    </form>
+  </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block extra_scripts %}
-  <script src="{% static 'js/chat.js' %}?v=20261020-1"></script>
+  <script src="{% static 'js/chat.js' %}?v=20261027-1"></script>
 {% endblock %}

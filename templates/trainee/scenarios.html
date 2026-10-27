@@ -19,6 +19,7 @@
         {% endif %}
         <h2 id="scenario-title-{{ card.scenario.id }}" class="peertrain-scenario-title">{{ card.meta.canonical_name }}</h2>
         <p class="peertrain-scenario-context">{{ card.meta.practice_context }}</p>
+        <p class="peertrain-scenario-guidance">{{ card.meta.description }}</p>
         <form method="post" class="peertrain-scenario-form">
           {% csrf_token %}
           <input type="hidden" name="scenario_id" value="{{ card.scenario.id }}">
@@ -27,5 +28,10 @@
       </article>
     </div>
   {% endfor %}
+  <div class="col-md-6">
+    <article class="peertrain-card h-100 scenario-card scenario-theme-default peertrain-coming-soon">
+      <h2 class="peertrain-scenario-title">Coming Soon...</h2>
+    </article>
+  </div>
 </div>
 {% endblock %}

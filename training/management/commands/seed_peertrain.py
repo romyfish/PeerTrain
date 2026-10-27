@@ -1,4 +1,4 @@
-from training.prompts import opening_message_for
+from training.prompts import ROLEPLAY_SCENARIOS, opening_message_for
 from datetime import datetime, timedelta
 
 from django.contrib.auth import get_user_model
@@ -62,14 +62,14 @@ class Command(BaseCommand):
             if scenario is None:
                 scenario = Scenario(boundary_type=boundary_type)
             scenario.title = item["title"]
-            scenario.description = item["description"]
+            scenario.description = ROLEPLAY_SCENARIOS[boundary_type]["guidance"]
             scenario.estimated_duration_min = item["estimated_duration_min"]
             scenario.learning_objectives = "\n".join(item["learning_objectives"])
             scenario.is_active = True
             scenario.save()
             scenario_lookup[boundary_type] = scenario
 
-        # Preserve historical relationships while keeping only the four canonical scenarios selectable.
+        # Preserve historical relationships while keeping only the three active scenarios selectable.
         Scenario.objects.exclude(id__in=[scenario.id for scenario in scenario_lookup.values()]).update(
             is_active=False
         )
@@ -106,11 +106,9 @@ class Command(BaseCommand):
             ("AGENCY", 2, 2, None),
             ("RELATIONSHIP", 2, 3, None),
             ("SAFETY", 3, 3, 2),
-            ("INTEGRATED", 3, 3, 3),
             ("AGENCY", 4, 3, None),
             ("RELATIONSHIP", 4, 4, None),
             ("SAFETY", 4, 4, 4),
-            ("INTEGRATED", 4, 4, 5),
         ]
         anchor = datetime(2026, 1, 15, 10, 0, tzinfo=timezone.get_current_timezone())
 
@@ -150,7 +148,7 @@ class Command(BaseCommand):
                 session=session,
                 sender_type=Message.SenderTypes.AI,
                 created_at=session.start_time,
-                defaults={"content": opening_message_for(boundary_type, session.id)},
+                defaults={"content": opening_message_for(boundary_type, session.persona)},
             )
             Message.objects.update_or_create(
                 session=session,
@@ -210,6 +208,8 @@ class Command(BaseCommand):
                 },
             )
 
-        TrainingSession.objects.filter(user=trainee).exclude(id__in=sessions_to_keep).delete()
+        TrainingSession.objects.filter(user=trainee).exclude(
+            id__in=sessions_to_keep,
+        ).exclude(scenario__boundary_type="INTEGRATED").delete()
         recalculate_user_progress(trainee)
         self.stdout.write(self.style.SUCCESS("PeerTrain seed data created or refreshed."))

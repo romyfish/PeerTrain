@@ -1,6 +1,7 @@
 """Code prompt composition, provider history and read-only Admin regressions."""
 
 import re
+from itertools import product
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -25,20 +26,19 @@ from training.tests import TrainingFlowBase
 
 
 class CodePromptTests(TrainingFlowBase):
-    def test_reference_wording_and_variants_are_preserved_exactly(self):
-        reference = (Path(settings.BASE_DIR) / "Prompt-Simplification.md").read_text(encoding="utf-8")
-        definitions = []
-        for kind in ("ROLE_PLAY", "FEEDBACK", "REFLECTION"):
-            definitions.extend((prompts.DEFAULT_PROMPT_CONTEXTS[kind], prompts.DEFAULT_PROMPT_METHODS[kind]))
-            definitions.extend(prompts.scenario_prompt_context_for(kind, key) for key in prompts.ROLEPLAY_SCENARIOS)
-        definitions.extend((prompts.ROLEPLAY_OPENING_INSTRUCTIONS, prompts.ROLEPLAY_CONTINUATION_INSTRUCTIONS))
-        for text in re.findall(r"```text\n(.*?)\n```", reference, re.S):
-            self.assertTrue(any(text in definition for definition in definitions), text)
+    def test_roleplay_content_matches_source_and_excludes_reserved_cases(self):
+        reference = (Path(settings.BASE_DIR) / "Role-play_Prompts.md").read_text(encoding="utf-8")
+        self.assertIn(prompts.ROLEPLAY_SHARED_INSTRUCTIONS, reference)
+        self.assertEqual(set(prompts.ROLEPLAY_SCENARIOS), {"AGENCY", "RELATIONSHIP", "SAFETY"})
+        names = []
         for scenario in prompts.ROLEPLAY_SCENARIOS.values():
-            for persona in scenario["persona_variations"]:
-                self.assertIn(f"**{persona['label']}**: {persona['description']}", reference)
-            for opening in scenario["opening_variants"]:
-                self.assertIn(opening, reference)
+            self.assertIn(scenario["training_focus"], reference)
+            self.assertIn(scenario["guidance"], reference)
+            for persona in scenario["personas"].values():
+                names.append(persona["name"])
+                for key in ("setting", "case_background", "emotional_needs", "private_context", "behaviour_guidance", "safety_limits", "example_opening"):
+                    self.assertIn(persona[key], reference)
+        self.assertEqual(names, ["Andy", "Alex", "Bailey", "Billy", "Casey", "Carly"])
 
     def test_prompts_need_no_database_and_no_prompt_table_exists(self):
         self.assertNotIn("training_prompt", connection.introspection.table_names())
@@ -57,9 +57,9 @@ class CodePromptTests(TrainingFlowBase):
         for key in prompts.ROLEPLAY_SCENARIOS:
             self.scenario.boundary_type = key
             self.scenario.save()
-            for provider in ("openai", "google"):
+            for provider, mode in product(("openai", "google"), ("pso", "student")):
                 with self.subTest(scenario=key, provider=provider), self.settings(LLM_PROVIDER=provider):
-                    session = TrainingSession.objects.create(user=self.trainee, scenario=self.scenario)
+                    session = TrainingSession.objects.create(user=self.trainee, scenario=self.scenario, persona=mode)
                     client = Mock()
                     client.responses.create.side_effect = [SimpleNamespace(output_text=opening), SimpleNamespace(output_text=reply)]
                     client.models.generate_content.side_effect = [SimpleNamespace(text=opening), SimpleNamespace(text=reply)]
@@ -74,10 +74,10 @@ class CodePromptTests(TrainingFlowBase):
                     definition = get_prompt_for_type("ROLE_PLAY", session.scenario)
                     first_system = _roleplay_opening_system_prompt(session, definition)
                     next_system = _roleplay_system_prompt(session, definition, trainee)
-                    persona = prompts.session_persona_for(key, session.id)
+                    persona = prompts.persona_prompt_for(key, session.persona)
                     for system in (first_system, next_system):
-                        self.assertIn(prompts.ROLEPLAY_SCENARIOS[key]["background"], system)
-                        self.assertIn(persona["description"], system)
+                        self.assertIn(prompts.ROLEPLAY_SCENARIOS[key]["training_focus"], system)
+                        self.assertIn(persona, system)
                         self.assertIn(prompts.ROLEPLAY_SAFETY_CONSTRAINTS, system)
                     # Trainee keywords and turn counts never select a behavioural branch.
                     self.assertEqual(next_system, _roleplay_system_prompt(session, definition, "Message me anytime; I promise secrecy."))
@@ -98,6 +98,46 @@ class CodePromptTests(TrainingFlowBase):
             message = generate_ai_opening(session)
             self.assertEqual(message.content, prompts.opening_message_for(key, session.id))
             self.assertTrue(generate_ai_reply(session, "Could you say more?").content)
+
+    @override_settings(OPENAI_API_KEY="", GEMINI_API_KEY="")
+    def test_six_personas_are_confirmed_before_opening_and_fixed_on_refresh(self):
+        self.client.force_login(self.trainee)
+        for boundary, scenario in prompts.ROLEPLAY_SCENARIOS.items():
+            self.scenario.boundary_type = boundary
+            self.scenario.save()
+            for mode, character in scenario["personas"].items():
+                with self.subTest(boundary=boundary, mode=mode):
+                    session = TrainingSession.objects.create(user=self.trainee, scenario=self.scenario)
+                    url = reverse("chat", kwargs={"session_id": session.pk})
+                    response = self.client.get(url)
+                    self.assertContains(response, 'id="persona-selection"')
+                    self.assertContains(response, "University student mode")
+                    self.assertNotContains(response, character["private_context"])
+                    self.assertNotContains(response, character["safety_limits"])
+                    self.assertFalse(session.messages.exists())
+                    selected = self.client.post(url, {"action": "select_persona", "persona": mode})
+                    self.assertTrue(selected.json()["ok"])
+                    session.refresh_from_db()
+                    self.assertEqual(session.persona, mode)
+                    self.assertFalse(session.messages.exists())
+                    repeated = self.client.post(url, {"action": "select_persona", "persona": "student" if mode == "pso" else "pso"})
+                    self.assertEqual(repeated.json()["name"], character["name"])
+                    self.assertNotContains(self.client.get(url), 'id="persona-selection"')
+                    headers = {"HTTP_X_REQUESTED_WITH": "XMLHttpRequest", "HTTP_ACCEPT": "application/json"}
+                    opened = self.client.post(url, {"action": "start_roleplay"}, **headers)
+                    self.assertEqual(opened.status_code, 200)
+                    self.assertEqual(session.messages.get().content, prompts.opening_message_for(boundary, mode))
+                    self.assertIn(character["name"] + " (AI-simulated)", opened.json()["opening_message_html"])
+                    self.assertIn(character["portrait"], opened.json()["opening_message_html"])
+                    self.client.post(url, {"action": "select_persona", "persona": "student" if mode == "pso" else "pso"})
+                    session.refresh_from_db()
+                    self.assertEqual(session.persona, mode)
+                    self.client.post(url, {"action": "start_roleplay"}, **headers)
+                    self.assertEqual(session.messages.count(), 1)
+                    resumed = self.client.get(url)
+                    self.assertNotContains(resumed, 'id="persona-selection"')
+                    self.assertContains(resumed, character["name"] + " (AI-simulated)")
+                    self.assertContains(resumed, character["portrait"])
 
     def test_quality_validation_does_not_choose_relationship_behaviour(self):
         self.scenario.boundary_type = "RELATIONSHIP"

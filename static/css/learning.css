@@ -531,7 +531,8 @@
   flex: 0 0 auto;
   place-items: center;
   border: 1px solid #cbd8ee;
-  border-radius: 0.85rem;
+  border-radius: 50%;
+  object-fit: cover;
 }
 
 .peertrain-history-user-avatar {

@@ -1,5 +1,6 @@
 import logging
 
+from django.templatetags.static import static
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -21,7 +22,7 @@ from training.content import (
 from training.prompts import (
     DEFAULT_PROMPT_CONTEXTS, DEFAULT_PROMPT_METHODS, ROLEPLAY_SCENARIOS,
     ROLEPLAY_OPENING_INSTRUCTIONS, ROLEPLAY_CONTINUATION_INSTRUCTIONS,
-    scenario_prompt_context_for,
+    scenario_prompt_context_for, persona_prompt_for,
 )
 from training.forms import (
     BoundaryTurnReviewForm,
@@ -347,7 +348,7 @@ def dashboard_view(request):
 @login_required
 @role_required("TRAINEE")
 def scenarios_view(request):
-    scenarios = list(Scenario.objects.filter(is_active=True))
+    scenarios = list(Scenario.objects.filter(is_active=True, boundary_type__in=ROLEPLAY_SCENARIOS))
     meta_map = _scenario_meta_map()
     scenario_order = {
         boundary_type: meta.get("order", 99)
@@ -361,7 +362,7 @@ def scenarios_view(request):
     )
 
     if request.method == "POST":
-        scenario = get_object_or_404(Scenario, pk=request.POST.get("scenario_id"), is_active=True)
+        scenario = get_object_or_404(Scenario, pk=request.POST.get("scenario_id"), is_active=True, boundary_type__in=ROLEPLAY_SCENARIOS)
         session = TrainingSession.objects.create(
             user=request.user,
             scenario=scenario,
@@ -400,6 +401,9 @@ def chat_view(request, session_id):
             )
         return redirect("session_review", session_id=session.id)
 
+    if session.scenario.boundary_type not in ROLEPLAY_SCENARIOS:
+        raise Http404("This scenario is not available for practice.")
+
     settings_obj = PlatformSetting.get_solo()
     form = ChatMessageForm()
     scenario_meta = _scenario_meta_map().get(session.scenario.boundary_type, {})
@@ -434,6 +438,15 @@ def chat_view(request, session_id):
             )
             return redirect("session_review", session_id=session.id)
 
+        if action == "select_persona":
+            persona = request.POST.get("persona", "pso")
+            if persona not in {"pso", "student"}:
+                return _chat_json_error("Choose a valid persona.", 400)
+            if not session.messages.exists():
+                TrainingSession.objects.filter(pk=session.pk, persona="").update(persona=persona)
+            session.refresh_from_db()
+            return JsonResponse({"ok": True, "name": session.character["name"], "portrait": static(session.character["portrait"])})
+
         if action == "start_roleplay":
             existing_ai_message = (
                 session.messages.filter(sender_type=Message.SenderTypes.AI)
@@ -461,6 +474,8 @@ def chat_view(request, session_id):
                 messages.warning(request, error)
                 return redirect("chat", session_id=session.id)
 
+            TrainingSession.objects.filter(pk=session.pk, persona="").update(persona="pso")
+            session.refresh_from_db()
             try:
                 opening_message = generate_ai_opening(session)
             except Exception:
@@ -646,6 +661,8 @@ def chat_view(request, session_id):
             "scenario_meta": scenario_meta,
             "show_test_reply_tools": request.user.is_test_account,
             "needs_roleplay_opening": needs_roleplay_opening,
+            "needs_persona_selection": needs_roleplay_opening and not session.persona,
+            "roleplay_scenario": ROLEPLAY_SCENARIOS[session.scenario.boundary_type],
             **live_state,
         }
     )
@@ -755,9 +772,7 @@ def history_view(request):
         "safety": FeedbackReviewItem.BoundaryKeys.SAFETY,
     }
     for session in all_sessions:
-        session.history_title = boundary_framework_for(
-            session.scenario.boundary_type
-        ).get("canonical_name", session.scenario.title)
+        session.history_title = session.scenario.display_title
         boundary_keys = set()
         dimension_key = boundary_framework_for(
             session.scenario.boundary_type
@@ -1228,14 +1243,11 @@ def admin_prompts_view(request):
         if key == "ROLE_PLAY":
             shared += "\n\n" + ROLEPLAY_OPENING_INSTRUCTIONS + "\n\n" + ROLEPLAY_CONTINUATION_INSTRUCTIONS
         prompts = [{"name": "Shared instructions", "content": shared}]
-        for boundary in ("AGENCY", "RELATIONSHIP", "SAFETY", "INTEGRATED"):
+        for boundary in (ROLEPLAY_SCENARIOS if key == "ROLE_PLAY" else ("AGENCY", "RELATIONSHIP", "SAFETY", "INTEGRATED")):
             content = scenario_prompt_context_for(key, boundary)
             if key == "ROLE_PLAY":
                 scenario = ROLEPLAY_SCENARIOS[boundary]
-                content += "\n\nPersona variations:\n" + "\n".join(
-                    f"{p['label']}: {p['description']}" for p in scenario["persona_variations"]
-                )
-                content += "\n\nOpening fallbacks:\n" + "\n".join(scenario["opening_variants"])
+                content += "\n\n" + "\n\n".join(persona_prompt_for(boundary, mode) for mode in scenario["personas"])
             prompts.append({"name": boundary, "content": content})
         prompt_groups.append({
             "key": key.lower(), "title": f"{label} prompts", "tab_label": label,

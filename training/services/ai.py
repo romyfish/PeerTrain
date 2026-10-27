@@ -7,6 +7,8 @@ from types import SimpleNamespace
 from typing import Any
 
 from django.conf import settings
+from django.db import transaction
+from django.db.models import F
 from google import genai
 from google.genai import types as google_types
 from openai import OpenAI
@@ -32,7 +34,7 @@ from training.prompts import (
     default_prompt_parts,
     opening_message_for,
     scenario_prompt_context_for,
-    session_persona_for,
+    persona_prompt_for,
 )
 from training.models import (
     BoundaryEvaluationRun,
@@ -43,6 +45,7 @@ from training.models import (
     Message,
     ReflectionGuidance,
     Scenario,
+    TrainingSession,
 )
 from training.rubrics.boundaries import BOUNDARY_RUBRICS
 from training.services.boundary_scoring import (
@@ -422,7 +425,7 @@ def _feedback_transcript(session) -> str:
 def _scenario_prompt_context(session) -> str:
     boundary = boundary_framework_for(session.scenario.boundary_type)
     targeted_context = scenario_prompt_context_for(
-        'ROLE_PLAY',
+        'FEEDBACK' if session.scenario.boundary_type == "INTEGRATED" else 'ROLE_PLAY',
         session.scenario.boundary_type,
     )
     return (
@@ -1451,10 +1454,10 @@ def build_boundary_status_indicator(session) -> BoundaryStatusIndicator:
 
 
 def _roleplay_system_prompt(session, prompt, user_message: str, *, opening=False) -> str:
-    persona = session_persona_for(session.scenario.boundary_type, session.id)
+    persona = persona_prompt_for(session.scenario.boundary_type, session.persona)
     return "\n\n".join((
         prompt.context,
-        f"{persona['label']}: {persona['description']}",
+        persona,
         ROLEPLAY_SAFETY_CONSTRAINTS,
         ROLEPLAY_OPENING_INSTRUCTIONS if opening else ROLEPLAY_CONTINUATION_INSTRUCTIONS,
     ))
@@ -1759,6 +1762,12 @@ def generate_demo_trainee_reply(session, quality: str) -> GeneratedTraineeReply:
 
 
 def generate_ai_opening(session):
+    session = TrainingSession.objects.select_related("scenario").get(pk=session.pk)
+    if session.scenario.boundary_type not in {"AGENCY", "RELATIONSHIP", "SAFETY"}:
+        raise ValueError("This scenario is not available for practice.")
+    if not session.persona:
+        TrainingSession.objects.filter(pk=session.pk, persona="").update(persona="pso")
+        session.refresh_from_db()
     existing_opening = (
         session.messages.filter(sender_type=Message.SenderTypes.AI)
         .order_by("created_at", "id")
@@ -1806,39 +1815,41 @@ def generate_ai_opening(session):
             session.id,
             provider,
         )
-        opening_text = opening_message_for(session.scenario.boundary_type, session.id)
+        opening_text = opening_message_for(session.scenario.boundary_type, session.persona)
         used_fallback = True
         response_source = Message.ResponseSources.PLACEHOLDER
 
     opening_text = _strip_roleplay_framework_prefix(opening_text)
     if not opening_text:
-        opening_text = opening_message_for(session.scenario.boundary_type, session.id)
+        opening_text = opening_message_for(session.scenario.boundary_type, session.persona)
         used_fallback = True
         response_source = Message.ResponseSources.PLACEHOLDER
 
-    # 页面刷新可能让同一开场请求重叠；模型返回后再次检查，避免保存重复消息。
-    existing_opening = (
-        session.messages.filter(sender_type=Message.SenderTypes.AI)
-        .order_by("created_at", "id")
-        .first()
-    )
-    if existing_opening:
-        existing_opening.used_fallback = (
-            existing_opening.response_source == Message.ResponseSources.PLACEHOLDER
+    # Serialize the final save, including on SQLite, without holding a lock during the LLM call.
+    with transaction.atomic():
+        TrainingSession.objects.filter(pk=session.pk).update(persona=F("persona"))
+        existing_opening = (
+            session.messages.filter(sender_type=Message.SenderTypes.AI)
+            .order_by("created_at", "id")
+            .first()
         )
-        existing_opening.fallback_notice = (
-            "This opening uses a backup reply because the original live response was unavailable."
-            if existing_opening.used_fallback
-            else ""
-        )
-        return existing_opening
+        if existing_opening:
+            existing_opening.used_fallback = (
+                existing_opening.response_source == Message.ResponseSources.PLACEHOLDER
+            )
+            existing_opening.fallback_notice = (
+                "This opening uses a backup reply because the original live response was unavailable."
+                if existing_opening.used_fallback
+                else ""
+            )
+            return existing_opening
 
-    message = Message.objects.create(
-        session=session,
-        sender_type=Message.SenderTypes.AI,
-        content=opening_text,
-        response_source=response_source,
-    )
+        message = Message.objects.create(
+            session=session,
+            sender_type=Message.SenderTypes.AI,
+            content=opening_text,
+            response_source=response_source,
+        )
     message.used_fallback = used_fallback
     message.fallback_reason = fallback_reason
     message.fallback_notice = fallback_notice
@@ -1846,6 +1857,9 @@ def generate_ai_opening(session):
 
 
 def generate_ai_reply(session, user_message):
+    if not session.persona:
+        TrainingSession.objects.filter(pk=session.pk, persona="").update(persona="pso")
+        session.refresh_from_db()
     prompt = get_prompt_for_type('ROLE_PLAY', scenario=session.scenario)
     used_fallback = False
     fallback_reason = ""

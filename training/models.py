@@ -22,6 +22,11 @@ class Scenario(models.Model):
         ordering = ["title"]
 
     @property
+    def display_title(self):
+        from training.prompts import ROLEPLAY_SCENARIOS
+        return ROLEPLAY_SCENARIOS.get(self.boundary_type, {}).get("introduction", self.title)
+
+    @property
     def learning_objectives_list(self):
         return [line.strip() for line in self.learning_objectives.splitlines() if line.strip()]
 
@@ -53,6 +58,19 @@ class TrainingSession(models.Model):
         null=True,
         validators=[MinValueValidator(1), MaxValueValidator(5)],
     )
+    # Blank means an empty session is still awaiting the trainee's confirmation.
+    persona = models.CharField(
+        max_length=10, blank=True, default="",
+        choices=[("pso", "PSO Member"), ("student", "University Student")],
+    )
+
+    @property
+    def character(self):
+        from training.prompts import ROLEPLAY_SCENARIOS, session_persona_for
+        if self.scenario.boundary_type not in ROLEPLAY_SCENARIOS:
+            return None
+        return session_persona_for(self.scenario.boundary_type, self.persona)
+
     ended_early = models.BooleanField(default=False)
     rubric_version = models.CharField(max_length=30, default="BOUNDARY-SKILLS-2.0")
 

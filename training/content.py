@@ -114,27 +114,6 @@ SCENARIO_LIBRARY = [
         ],
     },
     {
-        "boundary_type": "INTEGRATED",
-        "title": "Integrated Boundary",
-        "practice_context": "Agency, Relationship & Safety Together",
-        "description": (
-            "Practise Agency, Relationship, and Safety boundaries together in one "
-            "conversation."
-        ),
-        "estimated_duration_min": 15,
-        "learning_objectives": [
-            "Protect autonomy and sensitive information",
-            "Maintain a sustainable supporter role",
-            "Recognise when safety needs escalation",
-        ],
-        "tips": [
-            "Clarify what can and cannot be kept confidential early.",
-            "Avoid encouraging disclosure of others' personal information.",
-            "Redirect if the conversation risks breaching a third party's privacy.",
-            "Remind the help-seeker of the boundaries of peer support.",
-        ],
-    },
-    {
         "boundary_type": "SAFETY",
         "title": "Safety Boundary",
         "practice_context": "Staying with People in Distress",
@@ -367,6 +346,10 @@ def scenario_map_by_boundary():
             **item,
             **boundary_framework_for(boundary_type),
         }
+    from training.prompts import ROLEPLAY_SCENARIOS
+    for key, roleplay in ROLEPLAY_SCENARIOS.items():
+        result[key]["description"] = roleplay["guidance"]
+        result[key]["training_focus"] = roleplay["training_focus"]
     return result
 
 

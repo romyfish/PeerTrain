@@ -2,7 +2,7 @@
 {% load static assessment_ui %}
 
 {% block extra_head %}
-  <link href="{% static 'css/learning.css' %}?v=20260819-1" rel="stylesheet">
+  <link href="{% static 'css/learning.css' %}?v=20261027-2" rel="stylesheet">
   <link href="{% static 'css/assessment.css' %}?v=20261020-2" rel="stylesheet">
 {% endblock %}
 
@@ -10,7 +10,7 @@
 <div class="peertrain-learning-page">
   <header class="peertrain-review-header mb-4">
     <div>
-      <h1 class="mb-0">{{ scenario_meta.canonical_name|default:session.scenario.title }}</h1>
+      <h1 class="mb-0">{{ session.scenario.display_title }}</h1>
     </div>
     <div class="peertrain-review-overall">
       <span>Overall feedback</span>

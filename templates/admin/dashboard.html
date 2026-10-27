@@ -45,7 +45,7 @@
             {% for session in recent_sessions %}
               <tr>
                 <td>{{ session.user.full_name_or_email }}</td>
-                <td>{{ session.scenario.title }}</td>
+                <td>{{ session.scenario.display_title }}</td>
                 <td>{{ session.start_time|date:"d M Y" }}</td>
                 <td>{% if session.overall_score %}<strong>Score {{ session.overall_score }}/5</strong>{% else %}<span class="text-muted">Not observed</span>{% endif %}</td>
               </tr>

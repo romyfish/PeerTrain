@@ -163,7 +163,7 @@ class ScenarioStartTests(TestCase):
         self.assertContains(response, 'data-needs-opening="true"', html=False)
         self.assertEqual(session.messages.count(), 0)
 
-    def test_live_openings_use_different_backup_variants_when_api_is_unavailable(self):
+    def test_live_openings_use_fixed_default_persona_when_api_is_unavailable(self):
         self.client.force_login(self.trainee)
 
         self.client.post(reverse("scenarios"), {"scenario_id": self.scenario.id})
@@ -186,7 +186,7 @@ class ScenarioStartTests(TestCase):
 
         first_opening = sessions[0].messages.first().content
         second_opening = sessions[1].messages.first().content
-        self.assertNotEqual(first_opening, second_opening)
+        self.assertEqual(first_opening, second_opening)
 
 
 class TrainingFlowBase(TestCase):
@@ -302,7 +302,7 @@ class TrainingFlowTests(TrainingFlowBase):
 
         self.assertEqual(first_response.status_code, 200)
         self.assertEqual(second_response.status_code, 200)
-        self.assertIn("AI Help-seeker", first_response.json()["opening_message_html"])
+        self.assertIn("Andy (AI-simulated)", first_response.json()["opening_message_html"])
         self.assertEqual(first_response.json()["response_source"], Message.ResponseSources.OPENAI)
         self.assertEqual(session.messages.count(), 1)
         mock_opening.assert_called_once_with(session)
@@ -394,7 +394,7 @@ class TrainingFlowTests(TrainingFlowBase):
         self.assertTrue(payload["can_send"])
         self.assertIn("&lt;script&gt;", payload["user_message_html"])
         self.assertNotIn("<script>", payload["user_message_html"])
-        self.assertIn("AI Help-seeker", payload["ai_message_html"])
+        self.assertIn("Andy (AI-simulated)", payload["ai_message_html"])
         self.assertIn("data-boundary-coach-live", payload["boundary_coach_html"])
         self.assertEqual(session.messages.count(), 3)
 
@@ -563,7 +563,7 @@ class TrainingFlowTests(TrainingFlowBase):
                 self.assertEqual(sent_response.status_code, 200)
                 sent_payload = sent_response.json()
                 self.assertIn(reply_content, sent_payload["user_message_html"])
-                self.assertIn("AI Help-seeker", sent_payload["ai_message_html"])
+                self.assertIn("Andy (AI-simulated)", sent_payload["ai_message_html"])
                 mock_generate_demo.assert_called_once_with(session, quality)
                 user_message = session.messages.get(sender_type=Message.SenderTypes.USER)
                 self.assertEqual(user_message.response_source, Message.ResponseSources.OPENAI)
@@ -1031,7 +1031,7 @@ class LLMServiceTests(TrainingFlowBase):
         self.assertEqual(session.messages.count(), 1)
         self.assertEqual(fake_responses.last_kwargs["model"], "test-model")
         developer_prompt = fake_responses.last_kwargs["input"][0]["content"]
-        self.assertIn("You have not spoken to the trainee yet", developer_prompt)
+        self.assertIn("Respect the conversation context described in your case", developer_prompt)
         self.assertIn(self.role_prompt.context, developer_prompt)
         self.assertNotIn(
             boundary_framework_for(session.scenario.boundary_type)["canonical_name"],
@@ -2093,7 +2093,7 @@ class LLMServiceTests(TrainingFlowBase):
             config.system_instruction,
         )
         self.assertNotIn("Boundary behaviour contract", config.system_instruction)
-        self.assertIn("Respond to the trainee", config.system_instruction)
+        self.assertIn("Respond to the supporter", config.system_instruction)
         self.assertEqual(config.temperature, 0.8)
         self.assertEqual(config.max_output_tokens, 320)
         self.assertEqual(config.thinking_config.thinking_budget, 0)
@@ -3014,6 +3014,23 @@ class AdminAnalyticsTests(TestCase):
 
 
 class SeedCommandTests(TestCase):
+    def test_seed_keeps_existing_integrated_demo_history_inactive(self):
+        call_command("seed_peertrain")
+        trainee = User.objects.get(email="alex.chen@university.ac.uk")
+        integrated = Scenario.objects.create(
+            title="Integrated Boundary", boundary_type="INTEGRATED",
+            description="Historical", estimated_duration_min=15, learning_objectives="",
+        )
+        historical = TrainingSession.objects.create(
+            user=trainee, scenario=integrated, status=TrainingSession.Statuses.COMPLETED,
+        )
+        Message.objects.create(session=historical, sender_type="AI", content="Historical conversation")
+        call_command("seed_peertrain")
+        integrated.refresh_from_db()
+        self.assertFalse(integrated.is_active)
+        self.assertTrue(TrainingSession.objects.filter(pk=historical.pk).exists())
+        self.assertEqual(historical.messages.get().content, "Historical conversation")
+
     def test_scenario_model_has_no_difficulty_field(self):
         self.assertNotIn("difficulty", {field.name for field in Scenario._meta.get_fields()})
 
@@ -3022,12 +3039,12 @@ class SeedCommandTests(TestCase):
         call_command("seed_peertrain")
 
         self.assertEqual(PlatformSetting.objects.count(), 1)
-        self.assertEqual(Scenario.objects.count(), 4)
+        self.assertEqual(Scenario.objects.count(), 3)
         trainee = User.objects.get(email="alex.chen@university.ac.uk")
-        self.assertEqual(TrainingSession.objects.filter(user=trainee).count(), 8)
+        self.assertEqual(TrainingSession.objects.filter(user=trainee).count(), 6)
 
-    def test_content_registry_covers_only_the_four_fixed_scenarios(self):
-        fixed_types = {"AGENCY", "INTEGRATED", "SAFETY", "RELATIONSHIP"}
+    def test_content_registry_covers_three_active_scenarios_and_historical_feedback(self):
+        fixed_types = {"AGENCY", "SAFETY", "RELATIONSHIP"}
         prompt_types = {"ROLE_PLAY", "FEEDBACK", "REFLECTION"}
 
         self.assertSetEqual(
@@ -3040,7 +3057,7 @@ class SeedCommandTests(TestCase):
         for prompt_type in prompt_types:
             self.assertSetEqual(
                 set(ROLEPLAY_SCENARIOS if prompt_type == "ROLE_PLAY" else SCENARIO_PROMPT_CONTEXTS[prompt_type]),
-                fixed_types,
+                fixed_types if prompt_type == "ROLE_PLAY" else fixed_types | {"INTEGRATED"},
             )
             for boundary_type in fixed_types:
                 parts = default_prompt_parts(prompt_type, boundary_type)
@@ -3054,7 +3071,7 @@ class SeedCommandTests(TestCase):
         demo_trainee = User.objects.get(email="alex.chen@university.ac.uk")
         snapshot = progress_snapshot(demo_trainee)
 
-        self.assertEqual(snapshot["completed_sessions"], 8)
+        self.assertEqual(snapshot["completed_sessions"], 6)
         self.assertGreater(snapshot["average_score"], 0)
         self.assertEqual(len(snapshot["skill_trends"]), 3)
         self.assertTrue(snapshot["has_skill_trends"])
@@ -3071,12 +3088,12 @@ class SeedCommandTests(TestCase):
                     ).select_related("scenario")
                 }
             ),
-            4,
+            3,
         )
 
     def test_seed_command_deactivates_non_canonical_scenarios_and_preserves_history(self):
         canonical_titles = {
-            config["canonical_name"] for config in BOUNDARY_FRAMEWORK.values()
+            BOUNDARY_FRAMEWORK[item["boundary_type"]]["canonical_name"] for item in SCENARIO_LIBRARY
         }
         extra_scenario = Scenario.objects.create(
             title="Temporary Debug Scenario",
@@ -3112,7 +3129,7 @@ class SeedCommandTests(TestCase):
 
         call_command("seed_peertrain")
 
-        self.assertEqual(Scenario.objects.filter(is_active=True).count(), 4)
+        self.assertEqual(Scenario.objects.filter(is_active=True).count(), 3)
         self.assertSetEqual(
             set(Scenario.objects.filter(is_active=True).values_list("title", flat=True)),
             canonical_titles,
@@ -3440,9 +3457,6 @@ class PageSmokeTests(TestCase):
             (
                 reverse("chat", kwargs={"session_id": self.chat_session.id}),
                 [
-                    boundary_framework_for(self.chat_scenario.boundary_type)[
-                        "practice_context"
-                    ],
                     "LIVE ROLE-PLAY",
                     "Enter to send",
                 ],
@@ -3580,7 +3594,7 @@ class PageSmokeTests(TestCase):
         self.assertNotContains(response, ">ON THIS PAGE<")
         self.assertNotContains(response, ">On this page<")
         self.assertContains(response, "data-dashboard-toc-details")
-        self.assertContains(response, "learning.css?v=20260819-1", html=False, status_code=200)
+        self.assertContains(response, "learning.css?v=20261027-2", html=False, status_code=200)
         self.assertContains(response, "progress.js?v=20260729-2", html=False, status_code=200)
         self.assertNotContains(response, "YOUR LEARNING HOME")
         self.assertNotContains(response, "LATEST FIRST")
@@ -3669,7 +3683,8 @@ class PageSmokeTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'class="peertrain-card h-100 scenario-card', count=4)
-        self.assertContains(response, "Start Scenario", count=4)
+        self.assertContains(response, "Start Scenario", count=3)
+        self.assertContains(response, "Coming Soon...")
         self.assertNotContains(response, "Learning objectives")
         self.assertNotContains(response, 'class="bi bi-clock"', html=False)
         self.assertNotContains(response, "bi-list-check")
@@ -3696,8 +3711,8 @@ class PageSmokeTests(TestCase):
         }
         for scenario in Scenario.objects.filter(is_active=True):
             with self.subTest(scenario=scenario.title):
-                self.assertContains(response, escape(scenario.title))
-                self.assertNotContains(response, escape(scenario.description))
+                self.assertContains(response, escape(boundary_framework_for(scenario.boundary_type)["canonical_name"]))
+                self.assertContains(response, escape(ROLEPLAY_SCENARIOS[scenario.boundary_type]["guidance"]))
                 self.assertContains(
                     response,
                     escape(
@@ -3718,36 +3733,18 @@ class PageSmokeTests(TestCase):
         title_positions = [rendered_html.index(escape(item["title"])) for item in ordered_items]
         self.assertEqual(title_positions, sorted(title_positions))
 
-    def test_scenario_visuals_are_mapped_by_boundary_type_not_title(self):
+    def test_integrated_scenario_is_unavailable_even_if_reactivated(self):
         self.client.force_login(self.trainee)
-        scenario = Scenario.objects.get(boundary_type=Scenario.BoundaryTypes.INTEGRATED)
-        scenario.title = "Renamed privacy practice"
-        scenario.save(update_fields=["title"])
-
+        scenario = Scenario.objects.create(title="Reserved Integrated", boundary_type="INTEGRATED", description="Reserved", estimated_duration_min=15, learning_objectives="", is_active=True)
         response = self.client.get(reverse("scenarios"))
-
-        self.assertEqual(response.status_code, 200)
-        self.assertNotContains(response, "Renamed privacy practice")
-        self.assertContains(response, "Integrated Boundary", html=False)
-        self.assertContains(response, "Agency, Relationship &amp; Safety Together")
-        self.assertContains(response, "scenario-theme-privacy")
-        self.assertContains(response, "/static/images/scenarios/privacy-boundary.svg")
-
-        session = TrainingSession.objects.create(
-            user=self.trainee,
-            scenario=scenario,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="I need to talk about something private.",
-            response_source=Message.ResponseSources.SCRIPTED,
-        )
-        chat_response = self.client.get(reverse("chat", kwargs={"session_id": session.id}))
-        self.assertContains(
-            chat_response,
-            "Clarify what can and cannot be kept confidential early.",
-        )
+        self.assertNotContains(response, "Integrated Boundary")
+        self.assertContains(response, "Coming Soon...")
+        self.assertEqual(self.client.post(reverse("scenarios"), {"scenario_id": scenario.pk}).status_code, 404)
+        session = TrainingSession.objects.create(user=self.trainee, scenario=scenario)
+        url = reverse("chat", kwargs={"session_id": session.pk})
+        self.assertEqual(self.client.get(url).status_code, 404)
+        self.assertEqual(self.client.post(url, {"action": "start_roleplay"}).status_code, 404)
+        self.assertEqual(session.messages.count(), 0)
 
     def test_session_review_combines_feedback_and_reflection(self):
         self.client.force_login(self.trainee)
@@ -3768,7 +3765,7 @@ class PageSmokeTests(TestCase):
         self.assertContains(response, "Quick Test Replies")
         self.assertContains(response, "Auto Better Reply")
         self.assertContains(response, "formnovalidate")
-        self.assertContains(response, "Agency Boundary")
+        self.assertContains(response, ROLEPLAY_SCENARIOS["AGENCY"]["introduction"])
         self.assertNotContains(response, "Use these as prompts, not a script.")
         self.assertNotContains(response, "A formative, rule-based coaching read")
         self.assertNotContains(response, "not a clinical judgement")
@@ -3873,7 +3870,7 @@ class PageSmokeTests(TestCase):
         self.assertContains(response, 'class="peertrain-guidance-section"', count=2, html=False)
         self.assertNotContains(response, "SCENARIO SUPPORT")
         self.assertContains(response, f'data-session-id="{self.chat_session.id}"', html=False)
-        self.assertContains(response, "/static/js/chat.js?v=20261020-1")
+        self.assertContains(response, "/static/js/chat.js?v=20261027-1")
         self.assertContains(response, "data-guidance-toggle", count=2, html=False)
         for former_level in ["Beginner", "Intermediate", "Advanced"]:
             self.assertNotContains(response, former_level)
@@ -4011,8 +4008,8 @@ class PageSmokeTests(TestCase):
         self.assertContains(response, "history-review-accordion")
         self.assertContains(response, "peertrain-ai-avatar")
         self.assertContains(response, "peertrain-history-user-avatar")
-        self.assertContains(response, "Agency Boundary")
-        self.assertContains(response, "learning.css?v=20260819-1", html=False)
+        self.assertContains(response, self.completed_session.scenario.display_title)
+        self.assertContains(response, "learning.css?v=20261027-2", html=False)
 
     def test_progress_page_explains_empty_state_for_new_trainee(self):
         empty_trainee = User.objects.create_user(
