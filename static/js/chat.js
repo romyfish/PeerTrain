@@ -32,7 +32,6 @@
   const userId = app.dataset.userId;
   const maxExchanges = Number(app.dataset.maxExchanges) || 0;
   const guidanceStorageKey = `peertrain:guidance-panel:collapsed:user:${userId}`;
-  const boundaryCoachCollapsedKey = `peertrain:boundary-panel:collapsed:user:${userId}`;
   const boundaryCoachLastSeenKey = `peertrain:boundary-panel:last-seen:session:${sessionId}`;
 
   let currentUserTurns = Number(app.dataset.userTurns) || 0;
@@ -41,6 +40,8 @@
   let needsOpening = app.dataset.needsOpening === "true";
   let requestPending = false;
   let generatedDraft = null;
+  // Start expanded on every visit; retain manual toggles only within this page.
+  let boundaryCoachCollapsed = false;
 
   const safeStorageGet = (storage, key) => {
     try {
@@ -223,7 +224,7 @@
     }
   };
 
-  const setDesktopBoundaryCoachCollapsed = (collapsed, { persist = true, moveFocus = false } = {}) => {
+  const setDesktopBoundaryCoachCollapsed = (collapsed, { moveFocus = false } = {}) => {
     if (!boundaryCoach || !boundaryCoachLayout || !desktopBoundaryCoach.matches) return;
 
     boundaryCoach.classList.toggle("is-collapsed", collapsed);
@@ -235,9 +236,7 @@
       toggle.setAttribute("aria-expanded", String(!collapsed));
     });
 
-    if (persist) {
-      safeStorageSet(window.localStorage, boundaryCoachCollapsedKey, collapsed ? "1" : "0");
-    }
+    boundaryCoachCollapsed = collapsed;
     if (collapsed) {
       refreshBoundaryCoachUnread();
     } else {
@@ -260,8 +259,7 @@
       const mobileOffcanvas = window.bootstrap?.Offcanvas?.getInstance(boundaryCoach);
       if (boundaryCoach.classList.contains("show")) mobileOffcanvas?.hide();
       boundaryCoachMobileTrigger?.setAttribute("aria-expanded", "false");
-      const collapsed = safeStorageGet(window.localStorage, boundaryCoachCollapsedKey) === "1";
-      setDesktopBoundaryCoachCollapsed(collapsed, { persist: false });
+      setDesktopBoundaryCoachCollapsed(boundaryCoachCollapsed);
       return;
     }
 

@@ -13,8 +13,8 @@
   --peertrain-amber: #d97706;
   --peertrain-red: #dc2626;
   --peertrain-shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
-  --scenario-emotional: #4285f4;
-  --scenario-emotional-surface: #e8f0fe;
+  --scenario-emotional: #655092;
+  --scenario-emotional-surface: #f6f3fa;
   --scenario-privacy: #7e57c2;
   --scenario-privacy-surface: #f3e8fd;
   --scenario-referral: #0f9d8a;
@@ -253,7 +253,7 @@ body.peertrain-body {
 .peertrain-scenario-shell.scenario-theme-emotional {
   --scenario-accent: var(--scenario-emotional);
   --scenario-surface: var(--scenario-emotional-surface);
-  --scenario-border: #c6dafc;
+  --scenario-border: #d2c6e5;
 }
 
 .peertrain-scenario-shell.scenario-theme-privacy {
@@ -1200,8 +1200,8 @@ body.peertrain-body {
 
 .peertrain-card.scenario-card.scenario-theme-emotional {
   --scenario-accent: var(--scenario-emotional);
-  --scenario-surface: var(--scenario-emotional-surface);
-  --scenario-border: #c6dafc;
+  --scenario-surface: #efe6fa;
+  --scenario-border: #d2c6e5;
 }
 
 .peertrain-card.scenario-card.scenario-theme-privacy {

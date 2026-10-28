@@ -3870,7 +3870,7 @@ class PageSmokeTests(TestCase):
         self.assertContains(response, 'class="peertrain-guidance-section"', count=2, html=False)
         self.assertNotContains(response, "SCENARIO SUPPORT")
         self.assertContains(response, f'data-session-id="{self.chat_session.id}"', html=False)
-        self.assertContains(response, "/static/js/chat.js?v=20261027-1")
+        self.assertContains(response, "/static/js/chat.js?v=20261028-2")
         self.assertContains(response, "data-guidance-toggle", count=2, html=False)
         for former_level in ["Beginner", "Intermediate", "Advanced"]:
             self.assertNotContains(response, former_level)
