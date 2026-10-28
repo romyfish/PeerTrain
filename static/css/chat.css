@@ -1365,9 +1365,33 @@
   line-height: 1.55;
 }
 
+#persona-selection .peertrain-persona-mode-selector {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin-bottom: 0;
+  padding: 0;
+}
+
+#persona-selection .peertrain-persona-mode-selector::after {
+  content: none;
+}
+
+#persona-selection .peertrain-persona-mode-selector .form-check-input {
+  float: none;
+  width: 2.5em;
+  height: 1.5em;
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+#persona-description {
+  margin-left: 3.65em
+}
+
 #persona-selection .form-check-label {
   font-family: "Segoe UI", system-ui, sans-serif;
-  font-size: 0.95rem;
+  font-size: 1.1rem;
   font-weight: 400;
 }
 

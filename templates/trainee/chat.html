@@ -5,7 +5,7 @@
 {% block app_container_class %}peertrain-chat-page-container{% endblock %}
 
 {% block extra_head %}
-  <link href="{% static 'css/chat.css' %}?v=20261028-4" rel="stylesheet">
+  <link href="{% static 'css/chat.css' %}?v=20261028-6" rel="stylesheet">
   <link href="{% static 'css/assessment.css' %}?v=20261020-2" rel="stylesheet">
 {% endblock %}
 
@@ -240,10 +240,11 @@
       <div class="modal-header"><h2 class="modal-title fs-5" id="persona-selection-title">{{ roleplay_scenario.introduction }}</h2></div>
       <div class="modal-body">
         <p class="peertrain-persona-guidance">{{ roleplay_scenario.guidance }}</p>
-        <div class="form-check form-switch">
-          <input class="form-check-input" type="checkbox" role="switch" id="student-mode">
-          <label class="form-check-label" for="student-mode">University student mode</label>
+        <div class="form-check form-switch peertrain-persona-mode-selector">
+          <input class="form-check-input" type="checkbox" role="switch" id="student-mode" aria-describedby="persona-description">
+          <label class="form-check-label" for="student-mode">Appointment-based support mode</label>
         </div>
+        <p class="small text-body-secondary mt-2 mb-0" id="persona-description" aria-live="polite">Current help-seeker: Peer support community member</p>
         <p class="text-danger mt-3 mb-0" data-persona-error role="alert" hidden></p>
       </div>
       <div class="modal-footer"><button class="btn peertrain-btn-primary" type="submit">Got it!</button></div>
@@ -254,5 +255,5 @@
 {% endblock %}
 
 {% block extra_scripts %}
-  <script src="{% static 'js/chat.js' %}?v=20261028-2"></script>
+  <script src="{% static 'js/chat.js' %}?v=20261028-3"></script>
 {% endblock %}

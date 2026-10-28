@@ -631,6 +631,15 @@
     updateJumpToLatest();
     const personaForm = document.querySelector("[data-persona-form]");
     if (personaForm) {
+      const personaSwitch = document.getElementById("student-mode");
+      const personaDescription = document.getElementById("persona-description");
+      const updatePersonaDescription = () => {
+        personaDescription.textContent = personaSwitch.checked
+          ? "Current help-seeker: University peer support service user"
+          : "Current help-seeker: Peer support community member";
+      };
+      personaSwitch.addEventListener("change", updatePersonaDescription);
+      updatePersonaDescription();
       const modal = new bootstrap.Modal(document.getElementById("persona-selection"));
       modal.show();
       personaForm.addEventListener("submit", async (event) => {

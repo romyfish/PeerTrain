@@ -1192,13 +1192,14 @@ body.peertrain-body {
   transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
-.peertrain-card.scenario-card:hover {
+.peertrain-card.scenario-card:not(.peertrain-coming-soon):hover {
   border-color: var(--scenario-accent);
   box-shadow: 0 12px 30px rgba(15, 23, 42, 0.1);
   transform: translateY(-2px);
 }
 
 .peertrain-card.scenario-card.scenario-theme-emotional {
+  --scenario-button-hover-border: #503b7a;
   --scenario-accent: var(--scenario-emotional);
   --scenario-surface: #efe6fa;
   --scenario-border: #d2c6e5;
@@ -1211,12 +1212,15 @@ body.peertrain-body {
 }
 
 .peertrain-card.scenario-card.scenario-theme-referral {
+  --scenario-button-hover-border: #087f70;
   --scenario-accent: var(--scenario-referral);
   --scenario-surface: var(--scenario-referral-surface);
   --scenario-border: #b7dec7;
 }
 
 .peertrain-card.scenario-card.scenario-theme-burnout {
+  --scenario-button-hover-background: #d87922;
+  --scenario-button-hover-border: #b47c22;
   --scenario-accent: var(--scenario-burnout);
   --scenario-surface: var(--scenario-burnout-surface);
   --scenario-border: #f8d97a;
@@ -1275,7 +1279,9 @@ body.peertrain-body {
 .peertrain-card.scenario-card .peertrain-btn-primary:hover,
 .peertrain-card.scenario-card .peertrain-btn-primary:focus-visible {
   color: #ffffff;
-  background: var(--scenario-accent);
+  background: var(--scenario-button-hover-background, var(--scenario-accent));
+  border-color: var(--scenario-button-hover-border, var(--scenario-accent));
+  filter: none;
 }
 
 @media (max-width: 991.98px) {
@@ -1384,7 +1390,7 @@ body.peertrain-body {
     transition: none;
   }
 
-  .peertrain-card.scenario-card:hover {
+  .peertrain-card.scenario-card:not(.peertrain-coming-soon):hover {
     transform: none;
   }
 }
