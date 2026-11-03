@@ -1,5 +1,4 @@
 <div class="peertrain-boundary-coach-live" data-boundary-coach-live aria-live="polite">
-{% if session.feedback_mode != 'terminal' %}
   <div class="peertrain-live-overall">
   <h3 class="peertrain-feedback-section-title">Overall status</h3>
   {% include "trainee/includes/assessment_status.html" with score=boundary_status.score compact=False only %}
@@ -22,5 +21,4 @@
     {% endif %}
   {% endfor %}
   </div>
-{% endif %}
 </div>

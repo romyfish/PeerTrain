@@ -1,12 +1,11 @@
 .peertrain-review { --chat-user-bubble: #5273e0; --chat-ai-surface: #e6edf6; color: #252a32; }
 .peertrain-review h1 { margin: 0 0 .7rem; font-size: clamp(1.5rem, 2.4vw, 2rem); }
-.peertrain-review > header { border-bottom: 1px solid #dce1e8; padding-bottom: 1rem; }
 .peertrain-review > header > p { margin-bottom: 0; }
 .peertrain-review h2 { font-size: 1.4rem; }
 .peertrain-review h3 { font-size: 1.1rem; margin: .3rem 0 1rem; }
 .review-title-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .review-title-row a { flex-shrink: 0; }
-.review-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.5rem; height: max(720px, calc(100dvh - 230px)); }
+.review-columns { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 1.5rem; }
 .review-feedback, .review-reflection { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: .8rem; }
 .review-overview, .review-conversation, .review-ai, .review-notes { background: #fff; border: 1px solid #e2e6ec; border-radius: 16px; padding: 1.25rem; }
 .review-overview, .review-conversation { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
@@ -15,6 +14,11 @@
 .review-overview-heading h3 { margin: 0; }
 .review-overall-status { display: inline-flex; align-items: center; gap: .4rem; }
 .review-reflection { position: relative; }
+.review-tabs { display: flex; flex-shrink: 0; gap: .5rem; border-bottom: 1px solid #dce1e8; }
+.review-tabs [role="tab"] { flex: 1; border: 0; border-bottom: 2px solid transparent; background: transparent; color: #596273; padding: .8rem .4rem; font-weight: 600; }
+.review-tabs [aria-selected="true"] { color: #3458be; border-bottom-color: #5273e0; }
+.review-tabs [role="tab"]:focus-visible { outline: 2px solid #5273e0; outline-offset: -2px; border-radius: 4px; }
+.review-reflection [role="tabpanel"][hidden] { display: none; }
 .review-reflection::before { content: ''; position: absolute; top: 0; bottom: 0; left: -.75rem; border-left: 1px solid #dce1e8; pointer-events: none; }
 .review-overall-copy { line-height: 1.6; }
 .review-summary-card { border: 1px solid; border-radius: 12px; padding: .8rem 1rem; margin: .65rem 0; }
@@ -33,6 +37,8 @@
 .review-ai, .review-notes { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
 .review-ai { padding-bottom: 0; }
 .reflection-chat { flex: 1; min-height: 0; overflow: auto; padding: .5rem .2rem; }
+.review-ai form { flex-shrink: 0; }
+.reflection-chat .peertrain-chat-message-bubble { min-width: 0; overflow-wrap: anywhere; }
 .reflection-chat .peertrain-chat-message { display: flex; gap: .6rem; margin-bottom: 1rem; align-items: flex-start; }
 .reflection-avatar { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
 .reflection-chat .peertrain-chat-message-ai .peertrain-chat-message-bubble { background: #eef0f2; color: #252a32; padding: .85rem 1rem; border-radius: 16px; }
@@ -53,6 +59,12 @@
 .boundary-reference-agency { color: #1769e0; }
 .boundary-reference-relationship { color: #b86100; }
 .boundary-reference-safety { color: #087f70; }
+@media (min-width: 901px) {
+  .peertrain-review-page .peertrain-main > .container-fluid { height: calc(100dvh - var(--peertrain-topbar-height, 68px)); display: flex; flex-direction: column; }
+  .peertrain-review { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .peertrain-review > header { flex-shrink: 0; }
+  .review-columns { flex: 1; min-height: 480px; }
+}
 @media (max-width: 900px) {
   .review-reflection { border-top: 1px solid #dce1e8; padding-top: 1rem; }
   .review-reflection::before { display: none; }

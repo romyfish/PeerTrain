@@ -3281,7 +3281,7 @@ class PageSmokeTests(TestCase):
         self.assertNotContains(response, "Session process")
         self.assertNotContains(response, "Turn-matched coaching")
         self.assertNotContains(response, "Evidence-verified Judge")
-        self.assertContains(response, 'data-feedback-mode="terminal"')
+        self.assertContains(response, 'data-boundary-coach-toggle')
         self.assertNotContains(response, "not a clinical judgement")
 
     def test_chat_page_renders_collapsible_guidance_sidebar(self):
@@ -3297,7 +3297,7 @@ class PageSmokeTests(TestCase):
         self.assertContains(response, 'class="peertrain-guidance-section"', count=2, html=False)
         self.assertNotContains(response, "SCENARIO SUPPORT")
         self.assertContains(response, f'data-session-id="{self.chat_session.id}"', html=False)
-        self.assertContains(response, "/static/js/chat.js?v=20261103-1")
+        self.assertContains(response, "/static/js/chat.js?v=20261103-4")
         self.assertContains(response, "data-guidance-toggle", count=2, html=False)
         for former_level in ["Beginner", "Intermediate", "Advanced"]:
             self.assertNotContains(response, former_level)
@@ -3342,7 +3342,7 @@ class PageSmokeTests(TestCase):
         response = self.client.get(reverse("chat", kwargs={"session_id": self.chat_session.id}))
 
         self.assertEqual(response.status_code, 200)
-        self.assertNotContains(response, 'data-boundary-status')
+        self.assertContains(response, 'data-boundary-status', count=1)
         self.assertContains(response, 'data-boundary-compact-status', count=2)
         self.assertContains(response, "Listening in progress")
         self.assertContains(response, "peertrain-assessment-neutral")
@@ -3369,7 +3369,7 @@ class PageSmokeTests(TestCase):
         from training.templatetags.assessment_ui import assessment_status
 
         self.assertContains(response, assessment_status(indicator.score)["label"])
-        self.assertNotContains(response, 'data-boundary-status')
+        self.assertContains(response, 'data-boundary-status', count=1)
         self.assertNotContains(response, f"Level {indicator.score}")
         self.assertNotContains(response, ">Focus<", html=False)
         self.assertNotContains(response, "Current area to strengthen")
@@ -3422,7 +3422,7 @@ class PageSmokeTests(TestCase):
         self.assertContains(response, "I would keep the warm tone")
         self.assertContains(response, "review-transcript")
         self.assertContains(response, "peertrain-ai-avatar")
-        self.assertContains(response, "review.css?v=20261103-2")
+        self.assertContains(response, "review.css?v=20261103-5")
 
     def test_progress_page_explains_empty_state_for_new_trainee(self):
         empty_trainee = User.objects.create_user(

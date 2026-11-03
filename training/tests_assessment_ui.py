@@ -62,8 +62,7 @@ class AssessmentPresentationTests(SimpleTestCase):
     def test_live_feedback_shows_only_concise_saved_item(self):
         live = render_to_string(
             "trainee/includes/boundary_coach_live.html",
-            {"session": SimpleNamespace(feedback_mode="concurrent"),
-             "boundary_status": SimpleNamespace(score=2),
+            {"boundary_status": SimpleNamespace(score=2),
              "turn_assessments": [SimpleNamespace(trainee_message_id=1, record={}, feedback_type="reflective_prompt", feedback_text="What would keep this sustainable?")]},
         )
         self.assertIn("What would keep this sustainable?", live)

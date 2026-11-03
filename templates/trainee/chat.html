@@ -5,14 +5,13 @@
 {% block app_container_class %}peertrain-chat-page-container{% endblock %}
 
 {% block extra_head %}
-  <link href="{% static 'css/chat.css' %}?v=20261103-3" rel="stylesheet">
+  <link href="{% static 'css/chat.css' %}?v=20261103-4" rel="stylesheet">
   <link href="{% static 'css/assessment.css' %}?v=20261020-2" rel="stylesheet">
 {% endblock %}
 
 {% block content %}
 <div
   class="peertrain-chat-app peertrain-scenario-shell {{ scenario_meta.theme_class|default:'scenario-theme-default' }}"
-  data-feedback-mode="{{ session.feedback_mode }}"
   data-chat-app
   data-chat-url="{% url 'chat' session.id %}"
   data-session-id="{{ session.id }}"
@@ -72,7 +71,6 @@
           <button
             type="button"
             class="peertrain-chat-header-button peertrain-boundary-coach-mobile-open d-xl-none"
-            {% if session.feedback_mode != "combined" %}disabled{% endif %}
             aria-controls="peertrain-boundary-coach"
             aria-expanded="false"
           >
@@ -194,7 +192,6 @@
           type="button"
           class="peertrain-boundary-coach-toggle peertrain-boundary-coach-expand"
           data-boundary-coach-toggle
-          {% if session.feedback_mode != "combined" %}disabled{% endif %}
           aria-controls="peertrain-boundary-coach-panel"
           aria-expanded="false"
           aria-label="Expand Live Feedback"
@@ -217,7 +214,6 @@
             type="button"
             class="peertrain-boundary-coach-toggle d-none d-xl-inline-flex"
             data-boundary-coach-toggle
-          {% if session.feedback_mode != "combined" %}disabled{% endif %}
             aria-controls="peertrain-boundary-coach-panel"
             aria-expanded="true"
             aria-label="Collapse Live Feedback"
@@ -242,15 +238,6 @@
       <div class="modal-header"><h2 class="modal-title fs-5" id="persona-selection-title">{{ roleplay_scenario.introduction }}</h2></div>
       <div class="modal-body">
         <p class="peertrain-persona-guidance">{{ roleplay_scenario.guidance }}</p>
-        {% if session.scenario.boundary_type == 'SAFETY' %}
-        <p>This scenario combines live feedback with a detailed review after the session. You can show or hide the Live Feedback at any time during your practice.</p>
-        {% else %}
-        <div class="form-check form-switch peertrain-persona-mode-selector">
-          <input class="form-check-input" type="checkbox" role="switch" id="live-feedback" aria-describedby="live-feedback-description">
-          <label class="form-check-label" for="live-feedback">Live feedback</label>
-        </div>
-        <p id="live-feedback-description">Show in-the-moment feedback during your practice.</p>
-        {% endif %}
         <div class="form-check form-switch peertrain-persona-mode-selector">
           <input class="form-check-input" type="checkbox" role="switch" id="student-mode" aria-describedby="persona-description">
           <label class="form-check-label" for="student-mode">Appointment-based support mode</label>
@@ -266,5 +253,5 @@
 {% endblock %}
 
 {% block extra_scripts %}
-  <script src="{% static 'js/chat.js' %}?v=20261103-1"></script>
+  <script src="{% static 'js/chat.js' %}?v=20261103-4"></script>
 {% endblock %}

@@ -334,7 +334,6 @@ def scenarios_view(request):
         session = TrainingSession.objects.create(
             user=request.user,
             scenario=scenario,
-            feedback_mode="combined" if scenario.boundary_type == "SAFETY" else "terminal",
         )
         # 先进入聊天页，再由页面异步请求 AI 开场，避免模型延迟阻塞页面跳转。
         return redirect("chat", session_id=session.id)
@@ -412,14 +411,12 @@ def chat_view(request, session_id):
             if persona not in {"pso", "student"}:
                 return _chat_json_error("Choose a valid persona.", 400)
             if not session.messages.exists():
-                mode = "combined" if session.scenario.boundary_type == "SAFETY" else (
-                    "concurrent" if request.POST.get("live_feedback") == "on" else "terminal")
-                TrainingSession.objects.filter(pk=session.pk, persona="").update(persona=persona, feedback_mode=mode)
+                TrainingSession.objects.filter(pk=session.pk, persona="").update(persona=persona)
             session.refresh_from_db()
             state = _chat_live_state(session, settings_obj.max_exchanges_per_session)
             return JsonResponse({
                 "ok": True, "name": session.character["name"],
-                "portrait": static(session.character["portrait"]), "feedback_mode": session.feedback_mode,
+                "portrait": static(session.character["portrait"]),
                 "boundary_coach_html": render_to_string('trainee/includes/boundary_coach_live.html',
                     {**state, 'session': session}, request=request),
             })
@@ -700,11 +697,19 @@ def session_review_view(request, session_id):
     examples = list(feedback.review_items.all())
     timeline = []
     for message in session.messages.select_related("session__scenario", "assessment"):
-        timeline.append({"message": message, "assessment": getattr(message, "assessment", None),
-                         "examples": [item for item in examples if item.message_id == message.pk]})
+        assessment = getattr(message, "assessment", None)
+        turn_examples = [item for item in examples if item.message_id == message.pk]
+        # Some historical reviews have a saved turn alternative but no review item.
+        # Render that existing text without creating or changing any saved records.
+        record = assessment.record if assessment else {}
+        alternative = record.get("alternative_reply")
+        if alternative and not any(item.better_reply == alternative for item in turn_examples):
+            turn_examples.append({"message_id": message.pk, "better_reply": alternative,
+                                  "why_it_matters": record.get("alternative_reason", "")})
+        timeline.append({"message": message, "assessment": assessment, "examples": turn_examples})
     context = _app_context(request, "history", "Session Review")
     context.update(session=session, feedback=feedback, timeline=timeline, examples=examples,
-        inline_feedback=session.feedback_mode != "concurrent", reflection=getattr(session, "reflection", None),
+        reflection=getattr(session, "reflection", None),
         reflection_messages=session.reflection_messages.all(), reflection_request_id=uuid.uuid4(),
         scenario_meta=_scenario_meta_map().get(session.scenario.boundary_type, {}))
     return render(request, "trainee/session_review.html", context)

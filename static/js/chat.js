@@ -42,8 +42,7 @@
   let generatedDraft = null;
   let pendingSend = null;
   // Start expanded on every visit; retain manual toggles only within this page.
-  let feedbackMode = app.dataset.feedbackMode;
-  let boundaryCoachCollapsed = feedbackMode === "terminal";
+  let boundaryCoachCollapsed = false;
 
   const safeStorageGet = (storage, key) => {
     try {
@@ -225,9 +224,7 @@
     }
     updateBoundaryStatus(boundaryScore);
 
-    const desktopCollapsed = desktopBoundaryCoach.matches && boundaryCoach?.classList.contains("is-collapsed");
-    const mobileClosed = !desktopBoundaryCoach.matches && !boundaryCoach?.classList.contains("show");
-    if (desktopCollapsed || mobileClosed) {
+    if (boundaryCoachCollapsed) {
       refreshBoundaryCoachUnread();
     } else {
       markBoundaryCoachSeen();
@@ -236,8 +233,6 @@
 
   const setDesktopBoundaryCoachCollapsed = (collapsed, { moveFocus = false } = {}) => {
     if (!boundaryCoach || !boundaryCoachLayout) return;
-    if (feedbackMode === "terminal") collapsed = true;
-    if (feedbackMode === "concurrent") collapsed = false;
 
     boundaryCoach.classList.toggle("is-collapsed", collapsed);
     boundaryCoachLayout.classList.toggle("is-coach-collapsed", collapsed);
@@ -247,6 +242,7 @@
     boundaryCoachToggles.forEach((toggle) => {
       toggle.setAttribute("aria-expanded", String(!collapsed));
     });
+    boundaryCoachMobileTrigger?.setAttribute("aria-expanded", String(!collapsed));
 
     boundaryCoachCollapsed = collapsed;
     if (collapsed) {
@@ -269,11 +265,8 @@
     if (!boundaryCoach || !boundaryCoachLayout) return;
     boundaryCoachMobileTrigger?.removeAttribute("data-bs-toggle");
     boundaryCoachMobileTrigger?.removeAttribute("data-bs-target");
-    boundaryCoachToggles.forEach(toggle => { toggle.disabled = feedbackMode !== "combined"; });
-    if (boundaryCoachMobileTrigger) boundaryCoachMobileTrigger.disabled = feedbackMode !== "combined";
     boundaryCoach.querySelectorAll('[data-bs-dismiss="offcanvas"]').forEach(toggle => { toggle.hidden = true; });
     setDesktopBoundaryCoachCollapsed(boundaryCoachCollapsed);
-    app.dataset.feedbackMode = feedbackMode;
   };
 
   const chatRequestError = (message, code = "request_failed", status = 0) => {
@@ -663,12 +656,8 @@
         button.disabled = true;
         try {
           const data = createActionData("select_persona");
-          data.set("live_feedback", document.getElementById("live-feedback")?.checked ? "on" : "off");
           data.set("persona", document.getElementById("student-mode").checked ? "student" : "pso");
           const character = await requestChatJson(data);
-          feedbackMode = character.feedback_mode;
-          boundaryCoachCollapsed = feedbackMode === "terminal";
-          syncBoundaryCoachForViewport();
           updateBoundaryCoach(character.boundary_coach_html, 0);
           pendingTemplate.content.querySelector(".peertrain-chat-speaker").textContent = `${character.name} (AI-simulated)`;
           pendingTemplate.content.querySelector(".peertrain-ai-avatar").src = character.portrait;

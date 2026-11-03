@@ -3,6 +3,6 @@
 <aside class="review-alternative" data-review-message="{{ example.message_id }}">
   <strong>An alternative reply to consider</strong>
   <p><q><em>{{ example.better_reply|linebreaksbr }}</em></q></p>
-  {% if inline_feedback and example.why_it_matters %}<p>{{ example.why_it_matters|boundary_highlights }}</p>{% endif %}
+  {% if example.why_it_matters %}<p>{{ example.why_it_matters|boundary_highlights }}</p>{% endif %}
 </aside>
 {% endif %}

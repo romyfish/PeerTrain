@@ -1405,8 +1405,7 @@
   color: var(--peertrain-primary);
 }
 
-/* On small screens Live Feedback remains part of the page, so locked concurrent
-   feedback never traps the conversation behind an offcanvas backdrop. */
+/* On small screens Live Feedback expands within the page without a backdrop. */
 @media (max-width: 1199.98px) {
   .peertrain-chat-app .peertrain-boundary-coach {
     position: static; visibility: visible !important; transform: none !important;
@@ -1416,9 +1415,6 @@
   .peertrain-chat-app .peertrain-boundary-coach.is-collapsed .peertrain-boundary-coach-panel { display: none; }
   .peertrain-chat-app .peertrain-boundary-coach-rail { display: none; }
 }
-[data-feedback-mode="terminal"] [data-boundary-compact-status],
-[data-feedback-mode="terminal"] [data-boundary-coach-unread] { display: none !important; }
-[data-feedback-mode="terminal"] [data-boundary-coach-panel] { display: none !important; }
 .peertrain-turn-feedback { margin: 1.25rem 0; line-height: 1.6; }
 .peertrain-feedback-history { display: flex; flex-direction: column; gap: .85rem; margin-top: 1rem; }
 .peertrain-live-turn { border: 1px solid rgba(90, 105, 125, .22); border-radius: 12px; padding: .8rem; background: rgba(255, 255, 255, .55); }

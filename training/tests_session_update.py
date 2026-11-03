@@ -50,30 +50,23 @@ class SessionUpdateTests(TestCase):
     def verdict(self, verdict='ALLOW', reply=None):
         return tasks.SafetyResult(verdict=verdict, reason_codes=[], brief_reason='Case consistent.', safe_reply=reply)
 
-    def test_mode_independent_assessment_and_none_saved(self):
+    def test_assessment_and_none_saved_without_visibility_context(self):
         message = self.message()
-        contexts = []
-        for mode in ('terminal', 'concurrent', 'combined'):
-            for kind in ('affirmation', 'none'):
-                with self.subTest(mode=mode, kind=kind):
-                    TurnAssessment.objects.all().delete()
-                    self.session.feedback_mode = mode
-                    self.session.save()
-                    with patch.object(tasks, 'task_call', return_value=self.result(kind)) as call:
-                        row = tasks.assess_turn(self.session, message)
-                        contexts.append(call.call_args.args[1])
-                        self.assertEqual(row.overall_status_level, 3)
-                        self.assertEqual(row.feedback_type, kind)
-                        self.assertEqual(row.trainee_message, message)
-                        if kind == 'none':
-                            self.assertEqual(row.feedback_text, '')
-                        tasks.assess_turn(self.session, message)
-                        self.assertEqual(call.call_count, 1)
-        for context in contexts:
-            self.assertEqual(context, contexts[0])
-            text = json.dumps(context)
-            for forbidden in ('feedback_mode', 'sidebar', 'visibility', 'terminal', 'concurrent', 'combined'):
-                self.assertNotIn(forbidden, text)
+        for kind in ('affirmation', 'none'):
+            with self.subTest(kind=kind):
+                TurnAssessment.objects.all().delete()
+                with patch.object(tasks, 'task_call', return_value=self.result(kind)) as call:
+                    row = tasks.assess_turn(self.session, message)
+                    self.assertEqual(row.overall_status_level, 3)
+                    self.assertEqual(row.feedback_type, kind)
+                    self.assertEqual(row.trainee_message, message)
+                    if kind == 'none':
+                        self.assertEqual(row.feedback_text, '')
+                    tasks.assess_turn(self.session, message)
+                    self.assertEqual(call.call_count, 1)
+                    context = json.dumps(call.call_args.args[1])
+                    for forbidden in ('feedback_mode', 'sidebar', 'visibility', 'terminal', 'concurrent', 'combined'):
+                        self.assertNotIn(forbidden, context)
 
     def test_assessment_failure_is_saved_without_failing_grade(self):
         with patch.object(tasks, 'task_call', side_effect=ValueError('invalid')):
@@ -137,34 +130,32 @@ class SessionUpdateTests(TestCase):
         self.assertEqual(reply.content, 'I am uncertain.')
         self.assertEqual(self.session.messages.count(), 1)
 
-    def test_entry_modes_persist_for_all_scenarios(self):
+    def test_entry_preserves_persona_controls_without_feedback_modes(self):
         for boundary in ('AGENCY', 'RELATIONSHIP', 'SAFETY'):
-            self.scenario.boundary_type = boundary
-            self.scenario.save()
-            for live in ('off', 'on'):
-                response = self.client.post(reverse('scenarios'), {'scenario_id': self.scenario.pk})
+            with self.subTest(boundary=boundary):
+                self.scenario.boundary_type = boundary
+                self.scenario.save()
+                self.client.post(reverse('scenarios'), {'scenario_id': self.scenario.pk})
                 session = TrainingSession.objects.order_by('-pk').first()
                 url = reverse('chat', args=[session.pk])
                 html = self.client.get(url)
                 self.assertContains(html, 'Live Feedback')
-                self.assertNotContains(html, 'Boundary Coach')
-                if boundary == 'SAFETY':
-                    self.assertNotContains(html, 'id="live-feedback"')
-                    self.assertContains(html, 'You can show or hide the Live Feedback')
-                else:
-                    self.assertContains(html, 'Show in-the-moment feedback during your practice.')
-                    self.assertContains(html, 'id="live-feedback"')
-                selected = self.client.post(url, {'action': 'select_persona', 'persona': 'pso', 'live_feedback': live}, **self.headers)
-                expected = 'combined' if boundary == 'SAFETY' else 'concurrent' if live == 'on' else 'terminal'
-                self.assertEqual(selected.json()['feedback_mode'], expected)
+                self.assertContains(html, 'id="student-mode"')
+                self.assertNotContains(html, 'id="live-feedback"')
+                self.assertNotContains(html, 'This scenario combines live feedback')
+                selected = self.client.post(url, {'action': 'select_persona', 'persona': 'pso'}, **self.headers)
+                self.assertEqual(selected.status_code, 200)
+                self.assertNotIn('feedback_mode', selected.json())
                 session.refresh_from_db()
-                self.assertEqual(session.feedback_mode, expected)
-                self.assertContains(self.client.get(url), f'data-feedback-mode="{expected}"')
-                self.client.post(url, {'action': 'select_persona', 'persona': 'student', 'live_feedback': 'off'}, **self.headers)
+                self.assertEqual(session.persona, 'pso')
+                reopened = self.client.get(url)
+                self.assertContains(reopened, 'data-boundary-coach-toggle')
+                self.assertNotContains(reopened, 'data-feedback-mode')
+                self.client.post(url, {'action': 'select_persona', 'persona': 'student'}, **self.headers)
                 session.refresh_from_db()
-                self.assertEqual(session.feedback_mode, expected)
+                self.assertEqual(session.persona, 'pso')
 
-    def test_review_mode_placement_and_full_original_transcript(self):
+    def test_review_saved_feedback_and_full_original_transcript(self):
         first = self.message('I feel overwhelmed.', 'AI')
         message = self.message()
         last = self.message('I am unsure where to start.', 'AI')
@@ -174,28 +165,40 @@ class SessionUpdateTests(TestCase):
         FeedbackReviewItem.objects.create(feedback=feedback, message=message, turn_index=1,
             message_excerpt=message.content, issue_label='Feedback', why_it_matters='Keeps choice open.',
             better_reply='Would it help to explore your options?')
-        for mode in ('terminal', 'concurrent', 'combined'):
-            self.session.feedback_mode = mode
-            self.session.save()
-            response = self.client.get(self.url)
+        for url in (self.url, reverse('history_detail', args=[self.session.pk])):
+            with patch.object(tasks, 'task_call') as call:
+                response = self.client.get(url, follow=True)
+            call.assert_not_called()
             body = response.content.decode()
             overview, conversation = body.split('<h3 id="conversation-heading">Conversation review</h3>')
             for original in (first, message, last):
                 self.assertIn(original.content, conversation)
-            if mode == 'concurrent':
-                self.assertNotIn('You invited their priorities.', conversation)
-                self.assertNotIn('An alternative reply to consider', conversation)
-                self.assertNotIn('An alternative reply to consider', overview)
-                self.assertNotIn(message.content, overview)
-            else:
-                self.assertIn('You invited their priorities.', conversation)
-                self.assertLess(conversation.index(message.content), conversation.index('An alternative reply to consider'))
-                self.assertLess(conversation.index('An alternative reply to consider'), conversation.index(last.content))
+            self.assertIn('You invited their priorities.', conversation)
+            self.assertIn('Keeps choice open.', conversation)
+            self.assertLess(conversation.index(message.content), conversation.index('An alternative reply to consider'))
+            self.assertLess(conversation.index('An alternative reply to consider'), conversation.index(last.content))
+            self.assertNotIn('An alternative reply to consider', overview)
             self.assertNotIn('PRIVATE CUE', body)
-            self.assertContains(response, 'Ask or share your thoughts…')
-            self.assertContains(response, 'remember for future practice…')
             self.assertContains(response, '/static/images/bot-icon.png')
             self.assertContains(response, 'reflection-avatar')
+            self.assertContains(response, 'role="tablist"')
+            self.assertContains(response, 'id="reflect-ai-tab" role="tab" aria-selected="true"')
+            self.assertContains(response, 'id="notes-panel" role="tabpanel" aria-labelledby="notes-tab" hidden')
+
+    def test_review_uses_saved_turn_alternative_without_backfill_or_duplicates(self):
+        message = self.message()
+        TurnAssessment.objects.create(trainee_message=message, feedback_type='none', record={
+            'alternative_reply': 'What would feel helpful?', 'alternative_reason': 'Keeps choice open.'})
+        feedback = self.complete()
+        with patch.object(tasks, 'task_call') as call:
+            response = self.client.get(self.url)
+        call.assert_not_called()
+        self.assertContains(response, 'What would feel helpful?', count=1)
+        self.assertContains(response, 'Keeps choice open.')
+        self.assertEqual(feedback.review_items.count(), 0)
+        FeedbackReviewItem.objects.create(feedback=feedback, message=message, turn_index=1,
+            better_reply='What would feel helpful?')
+        self.assertContains(self.client.get(self.url), 'What would feel helpful?', count=1)
 
     def test_review_none_hides_inline_item_and_optional_alternative(self):
         message = self.message()
@@ -344,7 +347,7 @@ class SessionUpdateTests(TestCase):
         self.assertIn('brief but kind greeting', prompts.ASSESSMENT_TURN)
         self.assertIn('You could also consider asking', prompts.ASSESSMENT_SYSTEM)
 
-    def test_live_feedback_history_and_saved_alternative_across_modes(self):
+    def test_live_feedback_history_and_saved_alternative(self):
         first = self.message('Hello, welcome back.')
         TurnAssessment.objects.create(trainee_message=first, feedback_type='affirmation',
             feedback_text='You offered a friendly welcome.', record={'boundary_relevant': False})
@@ -352,25 +355,16 @@ class SessionUpdateTests(TestCase):
         data = self.result().model_copy(update={'alternative_reply': 'What would feel helpful?', 'alternative_reason': 'Keeps choice open.'})
         with patch.object(tasks, 'task_call', return_value=data):
             tasks.assess_turn(self.session, message)
-        for mode in ('terminal', 'concurrent', 'combined'):
-            self.session.feedback_mode = mode
-            self.session.save()
-            response = self.client.get(self.chat_url)
-            body = response.content.decode()
-            if mode == 'terminal':
-                self.assertNotIn('You offered a friendly welcome.', body)
-                self.assertNotIn('What would feel helpful?', body)
-            else:
-                self.assertIn('You offered a friendly welcome.', body)
-                self.assertIn('What would feel helpful?', body)
-                self.assertIn('Boundary tips', body)
-                self.assertIn(f'data-turn-feedback="{first.pk}" >', body)
-                self.assertIn(f'data-turn-feedback="{message.pk}" open', body)
-                self.assertIn('<q><em>What would feel helpful?</em></q>', body)
+        response = self.client.get(self.chat_url)
+        body = response.content.decode()
+        self.assertIn('You offered a friendly welcome.', body)
+        self.assertIn('What would feel helpful?', body)
+        self.assertIn('Boundary tips', body)
+        self.assertIn(f'data-turn-feedback="{first.pk}" >', body)
+        self.assertIn(f'data-turn-feedback="{message.pk}" open', body)
+        self.assertIn('<q><em>What would feel helpful?</em></q>', body)
 
     def test_reply_feedback_heading_waits_for_visible_feedback(self):
-        self.session.feedback_mode = 'concurrent'
-        self.session.save()
         self.assertContains(self.client.get(self.chat_url), 'Overall status')
         self.assertNotContains(self.client.get(self.chat_url), 'peertrain-reply-feedback-title')
         message = self.message()

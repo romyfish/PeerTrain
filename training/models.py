@@ -71,10 +71,6 @@ class TrainingSession(models.Model):
             return None
         return session_persona_for(self.scenario.boundary_type, self.persona)
 
-    feedback_mode = models.CharField(
-        max_length=12, default="terminal",
-        choices=[("terminal", "Terminal"), ("concurrent", "Concurrent"), ("combined", "Combined")],
-    )
     ended_early = models.BooleanField(default=False)
     rubric_version = models.CharField(max_length=30, default="BOUNDARY-SKILLS-2.0")
 

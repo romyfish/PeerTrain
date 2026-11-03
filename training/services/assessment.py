@@ -1,4 +1,4 @@
-"""Mode-independent assessment, saved review, safety and reflection tasks."""
+"""Per-turn assessment, saved review, safety and reflection tasks."""
 import json
 import logging
 from typing import Literal
@@ -207,7 +207,7 @@ def saved_review(session):
         overview=result.overview, strengths=result.strengths, improvements=result.considerations, generation_source=source)
     trainee_messages = {m.pk: m for m in session.messages.filter(sender_type='USER')}
     saved_turns = {row['trainee_message_id']: row for row in records}
-    # Alternatives are assessed and saved once during practice in every mode.
+    # Alternatives are assessed and saved once during practice.
     # Session synthesis must not invent a second alternative for those turns.
     for message_id, row in saved_turns.items():
         record = row['record']

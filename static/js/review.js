@@ -15,6 +15,31 @@
     input.style.height = `${height}px`;
     input.style.overflowY = input.scrollHeight > 128 ? 'auto' : 'hidden';
   };
+  const tabs = [...document.querySelectorAll('[data-reflection-tab]')];
+  const selectTab = tab => {
+    tabs.forEach(candidate => {
+      const selected = candidate === tab;
+      candidate.setAttribute('aria-selected', String(selected));
+      candidate.tabIndex = selected ? 0 : -1;
+      document.getElementById(candidate.getAttribute('aria-controls')).hidden = !selected;
+    });
+    // Re-measure a draft after its composer becomes visible again.
+    if (tab.id === 'reflect-ai-tab') resizeInput();
+  };
+  tabs.forEach((tab, index) => {
+    tab.addEventListener('click', () => selectTab(tab));
+    tab.addEventListener('keydown', event => {
+      let next;
+      if (event.key === 'ArrowRight') next = (index + 1) % tabs.length;
+      else if (event.key === 'ArrowLeft') next = (index - 1 + tabs.length) % tabs.length;
+      else if (event.key === 'Home') next = 0;
+      else if (event.key === 'End') next = tabs.length - 1;
+      else return;
+      event.preventDefault();
+      selectTab(tabs[next]);
+      tabs[next].focus();
+    });
+  });
   input.addEventListener('input', resizeInput);
   input.addEventListener('keydown', event => {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
@@ -95,7 +120,8 @@
     } catch (error) { errorBox.textContent = error.message; input.value = content; }
     finally {
       pendingUser.remove(); pendingAi.remove(); log.removeAttribute('aria-busy');
-      button.disabled = false; input.readOnly = false; chatPending = false; resizeInput(); input.focus();
+      button.disabled = false; input.readOnly = false; chatPending = false;
+      if (!chatForm.closest('[role="tabpanel"]').hidden) { resizeInput(); input.focus(); }
     }
   });
   resizeInput();
