@@ -32,7 +32,7 @@
   --chat-sidebar-surface: var(--scenario-surface);
   /* Scale body typography by 1 / 0.86, with a 13px minimum at a 16px root. */
   --peertrain-sidebar-min-font-size: 0.8125rem;
-  font-size: 1.1628rem;
+  font-size: 1rem;
   min-height: calc(100dvh - var(--peertrain-topbar-height));
 }
 
@@ -1120,11 +1120,17 @@
   min-height: 3rem;
   align-items: center;
   justify-content: space-between;
-  color: var(--peertrain-text);
   cursor: pointer;
+  list-style: none;
+}
+
+.peertrain-guidance-section summary,
+.peertrain-feedback-section-title {
+  color: var(--peertrain-text);
+  font-family: inherit;
   font-size: 0.8605rem;
   font-weight: 800;
-  list-style: none;
+  line-height: 1.5;
 }
 
 .peertrain-guidance-section summary::after {
@@ -1395,6 +1401,41 @@
   font-weight: 400;
 }
 
-#student-mode:checked + .form-check-label {
+#persona-selection .peertrain-persona-mode-selector .form-check-input:checked + .form-check-label {
   color: var(--peertrain-primary);
 }
+
+/* On small screens Live Feedback remains part of the page, so locked concurrent
+   feedback never traps the conversation behind an offcanvas backdrop. */
+@media (max-width: 1199.98px) {
+  .peertrain-chat-app .peertrain-boundary-coach {
+    position: static; visibility: visible !important; transform: none !important;
+    width: 100%; height: auto; grid-column: 1 / -1; border: 0;
+  }
+  .peertrain-chat-app .peertrain-boundary-coach-panel { position: static; height: auto; max-height: 45dvh; overflow: auto; }
+  .peertrain-chat-app .peertrain-boundary-coach.is-collapsed .peertrain-boundary-coach-panel { display: none; }
+  .peertrain-chat-app .peertrain-boundary-coach-rail { display: none; }
+}
+[data-feedback-mode="terminal"] [data-boundary-compact-status],
+[data-feedback-mode="terminal"] [data-boundary-coach-unread] { display: none !important; }
+[data-feedback-mode="terminal"] [data-boundary-coach-panel] { display: none !important; }
+.peertrain-turn-feedback { margin: 1.25rem 0; line-height: 1.6; }
+.peertrain-feedback-history { display: flex; flex-direction: column; gap: .85rem; margin-top: 1rem; }
+.peertrain-live-turn { border: 1px solid rgba(90, 105, 125, .22); border-radius: 12px; padding: .8rem; background: rgba(255, 255, 255, .55); }
+.peertrain-live-turn summary { cursor: pointer; font-size: .9em; font-weight: 600; }
+.peertrain-boundary-tip-label { display: inline-block; margin-left: .5rem; color: #67552c; font-size: .85em; }
+.peertrain-live-turn .peertrain-turn-feedback { margin: .8rem 0; }
+.peertrain-live-alternative { border: 1px solid #e4d6af; background: #faf5e8; border-radius: 10px; padding: .8rem; font-size: .9em; }
+.peertrain-live-alternative p { margin: .5rem 0 0; }
+.peertrain-chat-app .peertrain-live-overall {
+  position: sticky;
+  top: 4.45rem;
+  z-index: 2;
+  padding-block: .65rem;
+  background: var(--chat-sidebar-surface);
+  border-bottom: 1px solid var(--peertrain-border);
+}
+.peertrain-feedback-section-title { margin: 0 0 .6rem; }
+.peertrain-reply-feedback-title { margin-top: .8rem; }
+.peertrain-live-overall [data-boundary-status] { display: flex; width: 100%; padding: 0; }
+.peertrain-live-overall .peertrain-assessment-icon { width: 2.4rem; height: 2.4rem; }

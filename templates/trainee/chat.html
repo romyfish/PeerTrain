@@ -5,13 +5,14 @@
 {% block app_container_class %}peertrain-chat-page-container{% endblock %}
 
 {% block extra_head %}
-  <link href="{% static 'css/chat.css' %}?v=20261028-6" rel="stylesheet">
+  <link href="{% static 'css/chat.css' %}?v=20261103-3" rel="stylesheet">
   <link href="{% static 'css/assessment.css' %}?v=20261020-2" rel="stylesheet">
 {% endblock %}
 
 {% block content %}
 <div
   class="peertrain-chat-app peertrain-scenario-shell {{ scenario_meta.theme_class|default:'scenario-theme-default' }}"
+  data-feedback-mode="{{ session.feedback_mode }}"
   data-chat-app
   data-chat-url="{% url 'chat' session.id %}"
   data-session-id="{{ session.id }}"
@@ -71,13 +72,12 @@
           <button
             type="button"
             class="peertrain-chat-header-button peertrain-boundary-coach-mobile-open d-xl-none"
-            data-bs-toggle="offcanvas"
-            data-bs-target="#peertrain-boundary-coach"
+            {% if session.feedback_mode != "combined" %}disabled{% endif %}
             aria-controls="peertrain-boundary-coach"
             aria-expanded="false"
           >
             <i class="bi bi-activity" aria-hidden="true"></i>
-            <span class="peertrain-chat-action-label">Boundary Coach</span>
+            <span class="peertrain-chat-action-label">Live Feedback</span>
             <span data-boundary-compact-status>
               {% include "trainee/includes/assessment_status.html" with score=boundary_status.score compact=True only %}
             </span>
@@ -194,9 +194,10 @@
           type="button"
           class="peertrain-boundary-coach-toggle peertrain-boundary-coach-expand"
           data-boundary-coach-toggle
+          {% if session.feedback_mode != "combined" %}disabled{% endif %}
           aria-controls="peertrain-boundary-coach-panel"
           aria-expanded="false"
-          aria-label="Expand Boundary Coach"
+          aria-label="Expand Live Feedback"
         >
           <i class="bi bi-layout-sidebar-inset-reverse" aria-hidden="true"></i>
         </button>
@@ -211,18 +212,19 @@
 
       <div class="peertrain-boundary-coach-panel" id="peertrain-boundary-coach-panel" data-boundary-coach-panel>
         <div class="offcanvas-header peertrain-boundary-coach-header">
-          <h2 id="peertrain-boundary-coach-title">Boundary Coach</h2>
+          <h2 id="peertrain-boundary-coach-title">Live Feedback</h2>
           <button
             type="button"
             class="peertrain-boundary-coach-toggle d-none d-xl-inline-flex"
             data-boundary-coach-toggle
+          {% if session.feedback_mode != "combined" %}disabled{% endif %}
             aria-controls="peertrain-boundary-coach-panel"
             aria-expanded="true"
-            aria-label="Collapse Boundary Coach"
+            aria-label="Collapse Live Feedback"
           >
             <i class="bi bi-layout-sidebar-inset-reverse" aria-hidden="true"></i>
           </button>
-          <button type="button" class="btn-close d-xl-none" data-bs-dismiss="offcanvas" aria-label="Close Boundary Coach"></button>
+          <button type="button" class="btn-close d-xl-none" data-bs-dismiss="offcanvas" aria-label="Close Live Feedback"></button>
         </div>
         <div class="offcanvas-body peertrain-boundary-coach-body">
           {% include "trainee/includes/boundary_coach_live.html" %}
@@ -240,6 +242,15 @@
       <div class="modal-header"><h2 class="modal-title fs-5" id="persona-selection-title">{{ roleplay_scenario.introduction }}</h2></div>
       <div class="modal-body">
         <p class="peertrain-persona-guidance">{{ roleplay_scenario.guidance }}</p>
+        {% if session.scenario.boundary_type == 'SAFETY' %}
+        <p>This scenario combines live feedback with a detailed review after the session. You can show or hide the Live Feedback at any time during your practice.</p>
+        {% else %}
+        <div class="form-check form-switch peertrain-persona-mode-selector">
+          <input class="form-check-input" type="checkbox" role="switch" id="live-feedback" aria-describedby="live-feedback-description">
+          <label class="form-check-label" for="live-feedback">Live feedback</label>
+        </div>
+        <p id="live-feedback-description">Show in-the-moment feedback during your practice.</p>
+        {% endif %}
         <div class="form-check form-switch peertrain-persona-mode-selector">
           <input class="form-check-input" type="checkbox" role="switch" id="student-mode" aria-describedby="persona-description">
           <label class="form-check-label" for="student-mode">Appointment-based support mode</label>
@@ -255,5 +266,5 @@
 {% endblock %}
 
 {% block extra_scripts %}
-  <script src="{% static 'js/chat.js' %}?v=20261028-3"></script>
+  <script src="{% static 'js/chat.js' %}?v=20261103-1"></script>
 {% endblock %}

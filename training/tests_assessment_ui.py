@@ -19,8 +19,8 @@ class AssessmentPresentationTests(SimpleTestCase):
             (3, "Making progress", "Good progress", "progress"),
             (4, "Well handled", "Well done", "handled"),
             (5, "Excellent handling", "Excellent work", "excellent"),
-            (None, "Listening in progress", "Not observed", "neutral"),
-            (0, "Listening in progress", "Not observed", "neutral"),
+            (None, "Listening in progress", "\u2014", "neutral"),
+            (0, "Listening in progress", "\u2014", "neutral"),
         ]
         for score, live_label, overall_title, tone in cases:
             with self.subTest(score=score):
@@ -49,28 +49,23 @@ class AssessmentPresentationTests(SimpleTestCase):
                     "trainee/session_review.html",
                     {
                         "feedback": SimpleNamespace(overall_score=score),
-                        "session": SimpleNamespace(scenario=SimpleNamespace(title="Practice")),
+                        "session": SimpleNamespace(id=1, scenario=SimpleNamespace(title="Practice", boundary_type="AGENCY")),
                     },
                 )
                 self.assertIn(overall_title, review)
                 self.assertIn(f"peertrain-assessment-title peertrain-assessment-{tone}", review)
                 self.assertNotIn("Overall observed point", review)
                 self.assertNotIn(f"Score {score}/5", review)
-                self.assertIn("Boundary notebook", review)
+                self.assertIn("My notes", review)
                 self.assertIn("Reflection", review)
 
-    def test_boundary_feedback_cards_are_open_by_default(self):
-        dimension = SimpleNamespace(
-            key="relationship", name="Relationship Boundary", tone="wobbling",
-            label="Wobbling", summary="Keep the support collaborative.",
-        )
+    def test_live_feedback_shows_only_concise_saved_item(self):
         live = render_to_string(
             "trainee/includes/boundary_coach_live.html",
-            {
-                "boundary_status": SimpleNamespace(score=2),
-                "boundary_map": SimpleNamespace(dimensions=[dimension]),
-            },
+            {"session": SimpleNamespace(feedback_mode="concurrent"),
+             "boundary_status": SimpleNamespace(score=2),
+             "turn_assessments": [SimpleNamespace(trainee_message_id=1, record={}, feedback_type="reflective_prompt", feedback_text="What would keep this sustainable?")]},
         )
-        self.assertIn('<details open class="peertrain-boundary-map-card', live)
-        self.assertIn("Keep the support collaborative.", live)
-        self.assertIn('<summary class="peertrain-boundary-map-row">', live)
+        self.assertIn("What would keep this sustainable?", live)
+        self.assertNotIn("Expected move", live)
+        self.assertNotIn("roleplay_cue", live)

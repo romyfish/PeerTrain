@@ -47,7 +47,6 @@
                 <strong>{{ session.history_title|default:session.scenario.title }}</strong>
                 <small>{{ session.end_time|default:session.start_time|date:"d M Y · H:i" }}</small>
               </span>
-                  {% if session.overall_score %}<span class="peertrain-session-score">Score {{ session.overall_score }}/5</span>{% endif %}
               <i class="bi bi-chevron-right"></i>
             </a>
           {% endfor %}

@@ -1,3 +1,4 @@
+import uuid
 import logging
 
 from django.templatetags.static import static
@@ -5,6 +6,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
+from django.db import transaction
 from django.db.models import Avg, Count, F, Max, Q
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -28,7 +30,6 @@ from training.forms import (
     BoundaryTurnReviewForm,
     ChatMessageForm,
     PlatformSettingForm,
-    ReflectionForm,
 )
 from training.models import (
     BoundaryEvaluationRun,
@@ -41,19 +42,17 @@ from training.models import (
     Reflection,
     Scenario,
     TrainingSession,
+    TurnAssessment,
 )
 from training.services.ai import (
-    build_boundary_map_indicator,
     build_boundary_status_indicator,
-    final_feedback_assessments,
     generate_ai_opening,
     generate_ai_reply,
     generate_demo_trainee_reply,
     generate_feedback,
-    generate_reflection_guidance,
 )
+from training.services.assessment import assess_turn, ensure_reflection_opening, reflect, lock_session
 from training.services.boundary_scoring import RUBRIC_VERSION
-from training.services.geval import ensure_reliable_geval_run
 from training.services.review_queue import (
     apply_human_review_resolution,
     grouped_review_queue,
@@ -65,46 +64,6 @@ from training.services.progress import (
     progress_snapshot,
     recalculate_user_progress,
 )
-
-
-def _boundary_score_steps(active_score):
-    return [
-        {
-            "score": 1,
-            "label": "At risk",
-            "tone": "risk",
-            "icon_asset": "images/boundary-status/level-1-at-risk.svg",
-            "active": active_score == 1,
-        },
-        {
-            "score": 2,
-            "label": "Wobbling",
-            "tone": "wobbling",
-            "icon_asset": "images/boundary-status/level-2-wobbling.svg",
-            "active": active_score == 2,
-        },
-        {
-            "score": 3,
-            "label": "Mixed",
-            "tone": "mixed",
-            "icon_asset": "images/boundary-status/level-3-mixed.svg",
-            "active": active_score == 3,
-        },
-        {
-            "score": 4,
-            "label": "Mostly steady",
-            "tone": "mostly-steady",
-            "icon_asset": "images/boundary-status/level-4-mostly-steady.svg",
-            "active": active_score == 4,
-        },
-        {
-            "score": 5,
-            "label": "Very steady",
-            "tone": "very-steady",
-            "icon_asset": "images/boundary-status/level-5-very-steady.svg",
-            "active": active_score == 5,
-        },
-    ]
 
 
 def _sidebar_items(user=None, is_admin=False):
@@ -138,13 +97,29 @@ def _scenario_meta_map():
     return scenario_map_by_boundary()
 
 
+@transaction.atomic
 def _process_chat_turn(
     session,
     content,
     max_exchanges,
     *,
     user_response_source=Message.ResponseSources.USER_INPUT,
+    request_id=None,
 ):
+    lock_session(session)
+    session.refresh_from_db()
+    if request_id:
+        try:
+            request_id = uuid.UUID(str(request_id))
+        except ValueError:
+            return {"ok": False, "status": 400, "code": "invalid_request", "error": "Invalid message request."}
+        previous = session.messages.filter(request_id=request_id, sender_type='USER').first()
+        if previous:
+            reply = session.messages.filter(sender_type='AI', pk__gt=previous.pk).first()
+            if reply:
+                return {"ok": True, "user_message": previous, "ai_message": reply, "notice": ""}
+    if session.status != TrainingSession.Statuses.IN_PROGRESS:
+        return {"ok": False, "status": 409, "code": "session_complete", "error": "This session has already been completed."}
     cleaned_content = (content or "").strip()
     if not cleaned_content:
         return {
@@ -173,19 +148,10 @@ def _process_chat_turn(
         sender_type=Message.SenderTypes.USER,
         content=cleaned_content,
         response_source=user_response_source,
+        request_id=request_id,
     )
+    assess_turn(session, user_message)
     ai_message = generate_ai_reply(session, cleaned_content)
-    try:
-        ensure_reliable_geval_run(
-            session,
-            purpose=BoundaryEvaluationRun.Purposes.LIVE,
-        )
-    except Exception:
-        logger.exception(
-            "The reliable boundary judge failed for session %s; "
-            "the deterministic score remains active.",
-            session.id,
-        )
     notice = ""
     if getattr(ai_message, "used_fallback", False):
         notice = getattr(
@@ -211,12 +177,14 @@ def _is_ajax_chat_request(request):
 
 def _chat_live_state(session, max_exchanges):
     boundary_status = build_boundary_status_indicator(session)
-    boundary_map = build_boundary_map_indicator(session)
+    latest_assessment = session.messages.filter(sender_type="USER").order_by("-id").first()
+    turn_assessments = list(TurnAssessment.objects.filter(trainee_message__session=session).select_related('trainee_message'))
     user_turns = session.messages.filter(sender_type=Message.SenderTypes.USER).count()
     return {
         "boundary_status": boundary_status,
-        "boundary_map": boundary_map,
-        "boundary_scale_steps": _boundary_score_steps(boundary_status.score),
+        "turn_assessment": getattr(latest_assessment, "assessment", None),
+        "turn_assessments": turn_assessments,
+        "has_turn_feedback": any(assessment.feedback_text for assessment in turn_assessments),
         "user_turns": user_turns,
         "max_exchanges": max_exchanges,
         "can_send": (
@@ -303,7 +271,7 @@ def _chat_json_success(request, session, result, max_exchanges, notice=""):
         )
         boundary_coach_html = render_to_string(
             "trainee/includes/boundary_coach_live.html",
-            state,
+            {**state, "session": session},
             request=request,
         )
     except Exception:
@@ -366,6 +334,7 @@ def scenarios_view(request):
         session = TrainingSession.objects.create(
             user=request.user,
             scenario=scenario,
+            feedback_mode="combined" if scenario.boundary_type == "SAFETY" else "terminal",
         )
         # 先进入聊天页，再由页面异步请求 AI 开场，避免模型延迟阻塞页面跳转。
         return redirect("chat", session_id=session.id)
@@ -443,9 +412,17 @@ def chat_view(request, session_id):
             if persona not in {"pso", "student"}:
                 return _chat_json_error("Choose a valid persona.", 400)
             if not session.messages.exists():
-                TrainingSession.objects.filter(pk=session.pk, persona="").update(persona=persona)
+                mode = "combined" if session.scenario.boundary_type == "SAFETY" else (
+                    "concurrent" if request.POST.get("live_feedback") == "on" else "terminal")
+                TrainingSession.objects.filter(pk=session.pk, persona="").update(persona=persona, feedback_mode=mode)
             session.refresh_from_db()
-            return JsonResponse({"ok": True, "name": session.character["name"], "portrait": static(session.character["portrait"])})
+            state = _chat_live_state(session, settings_obj.max_exchanges_per_session)
+            return JsonResponse({
+                "ok": True, "name": session.character["name"],
+                "portrait": static(session.character["portrait"]), "feedback_mode": session.feedback_mode,
+                "boundary_coach_html": render_to_string('trainee/includes/boundary_coach_live.html',
+                    {**state, 'session': session}, request=request),
+            })
 
         if action == "start_roleplay":
             existing_ai_message = (
@@ -583,6 +560,7 @@ def chat_view(request, session_id):
                 auto_reply.content,
                 settings_obj.max_exchanges_per_session,
                 user_response_source=auto_reply.response_source,
+                request_id=request.POST.get('request_id') or None,
             )
             if not result["ok"]:
                 if is_ajax:
@@ -625,6 +603,7 @@ def chat_view(request, session_id):
                 form.cleaned_data["content"],
                 settings_obj.max_exchanges_per_session,
                 user_response_source=user_response_source,
+                request_id=request.POST.get('request_id') or None,
             )
             if not result["ok"]:
                 if is_ajax:
@@ -692,65 +671,42 @@ def session_review_view(request, session_id):
     if session.status != TrainingSession.Statuses.COMPLETED:
         return redirect("chat", session_id=session.id)
     feedback = generate_feedback(session)
-    reflection_guidance = generate_reflection_guidance(session, feedback)
-    reflection = getattr(session, "reflection", None)
+    ensure_reflection_opening(session)
     if request.method == "POST":
-        form = ReflectionForm(request.POST, instance=reflection)
-        if form.is_valid():
-            reflection = form.save(commit=False)
-            reflection.session = session
-            reflection.save()
-            recalculate_user_progress(request.user)
-            messages.success(request, "Reflection saved to your history.")
-            return redirect("history_detail", session_id=session.id)
-    else:
-        form = ReflectionForm(instance=reflection)
-
-    score_map = {score.criterion: score for score in feedback.scores.all()}
-    assessment_map = final_feedback_assessments(session)
-    scenario_meta = _scenario_meta_map().get(session.scenario.boundary_type, {})
-    score_definitions = (
-        (
-            FeedbackScore.Criteria.AGENCY,
-            "Agency Boundary",
-            "bi-compass",
-            "agency",
-        ),
-        (
-            FeedbackScore.Criteria.RELATIONSHIP,
-            "Relationship Boundary",
-            "bi-person-bounding-box",
-            "relationship",
-        ),
-        (
-            FeedbackScore.Criteria.SAFETY,
-            "Safety Boundary",
-            "bi-signpost-split",
-            "safety",
-        ),
-    )
+        action = request.POST.get("action", "save_notes")
+        if action == "reflect":
+            content = request.POST.get("content", "").strip()
+            try:
+                request_id = uuid.UUID(request.POST.get("request_id", ""))
+            except ValueError:
+                return JsonResponse({"ok": False, "error": "Invalid reflection request."}, status=400)
+            if not content or len(content) > 12000:
+                return JsonResponse({"ok": False, "error": "Enter a reflection of up to 12,000 characters."}, status=400)
+            try:
+                if not reflect(session, feedback, content, request_id):
+                    return JsonResponse({"ok": False, "error": "Reflection AI is unavailable. Your message is saved; please try again."}, status=503)
+            except Exception:
+                logger.warning("Reflection unavailable for session %s", session.pk)
+                return JsonResponse({"ok": False, "error": "Reflection AI is unavailable. Please try again."}, status=503)
+            return JsonResponse({"ok": True, "messages": list(session.reflection_messages.values("sender_type", "content"))})
+        if action != "save_notes":
+            return JsonResponse({"ok": False, "error": "Unknown review action."}, status=400)
+        Reflection.objects.update_or_create(session=session, defaults={"reflection_text": request.POST.get("reflection_text", "")})
+        recalculate_user_progress(request.user)
+        if _is_ajax_chat_request(request):
+            return JsonResponse({"ok": True, "confirmation": "Saved"})
+        messages.success(request, "Saved")
+        return redirect("session_review", session_id=session.id)
+    examples = list(feedback.review_items.all())
+    timeline = []
+    for message in session.messages.select_related("session__scenario", "assessment"):
+        timeline.append({"message": message, "assessment": getattr(message, "assessment", None),
+                         "examples": [item for item in examples if item.message_id == message.pk]})
     context = _app_context(request, "history", "Session Review")
-    context.update(
-        {
-            "session": session,
-            "feedback": feedback,
-            "form": form,
-            "reflection": reflection,
-            "reflection_guidance": reflection_guidance,
-            "scenario_meta": scenario_meta,
-            "score_cards": [
-                {
-                    "criterion": criterion,
-                    "label": label,
-                    "icon": icon,
-                    "tone": tone,
-                    "score": score_map.get(criterion),
-                    "assessment": assessment_map.get(tone),
-                }
-                for criterion, label, icon, tone in score_definitions
-            ],
-        }
-    )
+    context.update(session=session, feedback=feedback, timeline=timeline, examples=examples,
+        inline_feedback=session.feedback_mode != "concurrent", reflection=getattr(session, "reflection", None),
+        reflection_messages=session.reflection_messages.all(), reflection_request_id=uuid.uuid4(),
+        scenario_meta=_scenario_meta_map().get(session.scenario.boundary_type, {}))
     return render(request, "trainee/session_review.html", context)
 
 
@@ -834,34 +790,8 @@ def history_view(request):
 @login_required
 @role_required("TRAINEE")
 def history_detail_view(request, session_id):
-    session = get_object_or_404(
-        TrainingSession.objects.select_related(
-            "scenario",
-            "feedback",
-            "reflection",
-        ).prefetch_related(
-            "messages",
-            "feedback__scores",
-            "feedback__review_items",
-        ),
-        pk=session_id,
-        user=request.user,
-        status=TrainingSession.Statuses.COMPLETED,
-    )
-    if not hasattr(session, "feedback"):
-        generate_feedback(session)
-        session.refresh_from_db()
-    context = _app_context(request, "history", "History Entry")
-    scenario_meta = _scenario_meta_map().get(session.scenario.boundary_type, {})
-    context.update(
-        {
-            "session": session,
-            "feedback": session.feedback,
-            "reflection": getattr(session, "reflection", None),
-            "scenario_meta": scenario_meta,
-        }
-    )
-    return render(request, "trainee/history_detail.html", context)
+    get_object_or_404(TrainingSession, pk=session_id, user=request.user, status=TrainingSession.Statuses.COMPLETED)
+    return redirect("session_review", session_id=session_id)
 
 
 @login_required

@@ -26,6 +26,13 @@ from training.tests import TrainingFlowBase
 
 
 class CodePromptTests(TrainingFlowBase):
+    def setUp(self):
+        super().setUp()
+        # Isolate persona composition; checker behaviour has its own integration tests.
+        checker = patch("training.services.assessment.checked_reply", side_effect=lambda session, candidate: (candidate, True))
+        checker.start()
+        self.addCleanup(checker.stop)
+
     def test_roleplay_content_matches_source_and_excludes_reserved_cases(self):
         reference = (Path(settings.BASE_DIR) / "Role-play_Prompts.md").read_text(encoding="utf-8")
         self.assertIn(prompts.ROLEPLAY_SHARED_INSTRUCTIONS, reference)
@@ -111,7 +118,7 @@ class CodePromptTests(TrainingFlowBase):
                     url = reverse("chat", kwargs={"session_id": session.pk})
                     response = self.client.get(url)
                     self.assertContains(response, 'id="persona-selection"')
-                    self.assertContains(response, "University student mode")
+                    self.assertContains(response, "Appointment-based support mode")
                     self.assertNotContains(response, character["private_context"])
                     self.assertNotContains(response, character["safety_limits"])
                     self.assertFalse(session.messages.exists())

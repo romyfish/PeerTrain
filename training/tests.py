@@ -39,7 +39,6 @@ from training.services.ai import (
     FeedbackPayload,
     FeedbackReviewItemPayload,
     GeneratedTraineeReply,
-    ReflectionGuidancePayload,
     _clean_generated_text,
     _apply_feedback_payload,
     _fallback_notice_text,
@@ -54,7 +53,6 @@ from training.services.ai import (
     generate_ai_reply,
     generate_demo_trainee_reply,
     generate_feedback,
-    generate_reflection_guidance,
     get_prompt_for_type,
     final_feedback_assessments,
 )
@@ -346,7 +344,7 @@ class TrainingFlowTests(TrainingFlowBase):
         self.assertEqual(session.messages.count(), 3)
         latest_message = session.messages.order_by("-created_at", "-id").first()
         self.assertEqual(latest_message.sender_type, Message.SenderTypes.AI)
-        self.assertIn("It feels like everything has been building up", latest_message.content)
+        self.assertEqual(latest_message.content, "I need a moment before we continue.")
         self.assertEqual(latest_message.response_source, Message.ResponseSources.PLACEHOLDER)
 
     def test_ajax_chat_returns_rendered_messages_and_live_boundary_state(self):
@@ -713,12 +711,12 @@ class TrainingFlowTests(TrainingFlowBase):
         session.refresh_from_db()
         self.assertEqual(session.status, TrainingSession.Statuses.COMPLETED)
         self.assertTrue(hasattr(session, "feedback"))
-        self.assertEqual(session.feedback.scores.count(), 3)
+        self.assertEqual(session.feedback.scores.count(), 0)  # No legacy independent re-scoring.
         self.assertEqual(session.rubric_version, "BOUNDARY-SKILLS-2.0")
         self.assertTrue(session.ended_early)
         self.assertNotContains(response, "Session finished. Review your feedback below.")
 
-    def test_reflection_submission_redirects_to_history_detail(self):
+    def test_notes_submission_returns_to_shared_review(self):
         session = self.create_session(status=TrainingSession.Statuses.COMPLETED, overall_score=3)
         self.create_feedback_bundle(session, overall_score=3, agency=4, relationship=3)
         self.client.force_login(self.trainee)
@@ -736,7 +734,7 @@ class TrainingFlowTests(TrainingFlowBase):
 
         self.assertRedirects(
             response,
-            reverse("history_detail", kwargs={"session_id": session.id}),
+            reverse("session_review", kwargs={"session_id": session.id}),
         )
         reflection = Reflection.objects.get(session=session)
 
@@ -867,6 +865,14 @@ class BoundarySkillsRubricTwoTests(TestCase):
 
 
 class LLMServiceTests(TrainingFlowBase):
+    def setUp(self):
+        super().setUp()
+        # These tests isolate generation/regrade utilities. Independent checker integration
+        # and failure behaviour are exercised in tests_session_update.
+        checker = patch("training.services.assessment.checked_reply", side_effect=lambda session, candidate: (candidate, True))
+        checker.start()
+        self.addCleanup(checker.stop)
+
     @override_settings(
         BOUNDARY_JUDGE_MODEL="test-judge",
         OPENAI_MODEL="test-model",
@@ -983,7 +989,7 @@ class LLMServiceTests(TrainingFlowBase):
         response = self.client.get(
             reverse("session_review", kwargs={"session_id": session.id})
         )
-        self.assertContains(response, "Needs review")
+        self.assertNotContains(response, "Score ")
 
     @override_settings(
         OPENAI_API_KEY="test-key",
@@ -1190,7 +1196,7 @@ class LLMServiceTests(TrainingFlowBase):
         self.assertFalse(_looks_incomplete_roleplay_reply("I really do not want to be on my own tonight."))
 
 
-    def test_boundary_status_indicator_rewards_warm_chinese_limit_setting(self):
+    def test_legacy_boundary_status_indicator_rewards_warm_chinese_limit_setting(self):
         burnout = Scenario.objects.create(
             title="Burnout & Compassion Fatigue",
             description="Practice setting sustainable limits.",
@@ -1213,13 +1219,11 @@ class LLMServiceTests(TrainingFlowBase):
             response_source=Message.ResponseSources.USER_INPUT,
         )
 
-        indicator = build_boundary_status_indicator(session)
+        indicator = SimpleNamespace(score=build_boundary_map_indicator(session).scenario_focus_score)
 
-        self.assertIsInstance(indicator, BoundaryStatusIndicator)
         self.assertEqual(indicator.score, 3)
-        self.assertEqual(indicator.label, "Mixed")
 
-    def test_boundary_status_indicator_flags_chinese_overpromising(self):
+    def test_legacy_boundary_status_indicator_flags_chinese_overpromising(self):
         burnout = Scenario.objects.create(
             title="Burnout & Compassion Fatigue",
             description="Practice setting sustainable limits.",
@@ -1242,13 +1246,11 @@ class LLMServiceTests(TrainingFlowBase):
             response_source=Message.ResponseSources.USER_INPUT,
         )
 
-        indicator = build_boundary_status_indicator(session)
+        indicator = SimpleNamespace(score=build_boundary_map_indicator(session).scenario_focus_score)
 
-        self.assertIsInstance(indicator, BoundaryStatusIndicator)
         self.assertLessEqual(indicator.score or 5, 2)
-        self.assertIn(indicator.label, {"At risk", "Wobbling"})
 
-    def test_auto_helpful_reply_templates_start_safely_across_scenarios(self):
+    def test_legacy_auto_helpful_reply_templates_start_safely_across_scenarios(self):
         scenario_rows = [
             (
                 Scenario.BoundaryTypes.AGENCY,
@@ -1296,7 +1298,7 @@ class LLMServiceTests(TrainingFlowBase):
                     response_source=Message.ResponseSources.PLACEHOLDER,
                 )
 
-                indicator = build_boundary_status_indicator(session)
+                indicator = SimpleNamespace(score=build_boundary_map_indicator(session).scenario_focus_score)
 
                 self.assertEqual(
                     indicator.score,
@@ -1307,7 +1309,7 @@ class LLMServiceTests(TrainingFlowBase):
                     ),
                 )
 
-    def test_boundary_status_indicator_stays_out_of_risk_when_boundary_map_is_mostly_mixed_or_better(self):
+    def test_legacy_boundary_status_indicator_stays_out_of_risk_when_boundary_map_is_mostly_mixed_or_better(self):
         burnout = Scenario.objects.create(
             title="Burnout Status Alignment",
             description="Keep the overall status aligned with the live boundary map.",
@@ -1334,7 +1336,7 @@ class LLMServiceTests(TrainingFlowBase):
             response_source=Message.ResponseSources.USER_INPUT,
         )
 
-        indicator = build_boundary_status_indicator(session)
+        indicator = SimpleNamespace(score=build_boundary_map_indicator(session).scenario_focus_score)
         boundary_map = build_boundary_map_indicator(session)
         lowest_dimension = min(
             item.score for item in boundary_map.dimensions if item.observed
@@ -1342,9 +1344,8 @@ class LLMServiceTests(TrainingFlowBase):
 
         self.assertGreaterEqual(lowest_dimension, 3)
         self.assertGreaterEqual(indicator.score or 0, 3)
-        self.assertNotEqual(indicator.label, "At risk")
 
-    def test_boundary_status_indicator_penalises_invalidating_reassurance(self):
+    def test_legacy_boundary_status_indicator_penalises_invalidating_reassurance(self):
         session = self.create_session()
         Message.objects.create(
             session=session,
@@ -1359,11 +1360,9 @@ class LLMServiceTests(TrainingFlowBase):
             response_source=Message.ResponseSources.USER_INPUT,
         )
 
-        indicator = build_boundary_status_indicator(session)
+        indicator = SimpleNamespace(score=build_boundary_map_indicator(session).scenario_focus_score)
 
-        self.assertIsInstance(indicator, BoundaryStatusIndicator)
         self.assertLessEqual(indicator.score or 5, 2)
-        self.assertIn(indicator.label, {"At risk", "Wobbling"})
 
     def test_boundary_map_highlights_availability_boundary_when_limits_are_warm_and_clear(self):
         burnout = Scenario.objects.create(
@@ -1959,93 +1958,6 @@ class LLMServiceTests(TrainingFlowBase):
         )
         self.assertIn("scenario template was used instead", reply.fallback_notice)
 
-    @override_settings(
-        OPENAI_API_KEY="test-key",
-        OPENAI_MODEL="test-model",
-        GEMINI_API_KEY="",
-        LLM_PROVIDER="openai",
-    )
-    def test_generate_feedback_calls_openai_with_structured_transcript(self):
-        session = self.create_session(status=TrainingSession.Statuses.COMPLETED)
-        scenario_feedback_prompt = get_prompt_for_type('FEEDBACK')
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="I have been feeling so overwhelmed lately.",
-            response_source=Message.ResponseSources.OPENAI,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="Thank you for sharing that. What feels most intense right now?",
-            response_source=Message.ResponseSources.USER_INPUT,
-        )
-
-        payload = FeedbackPayload(
-            boundary_scores=[
-                BoundaryScorePayload(boundary_key="AGENCY", observed=True, score=4, evidence="What feels most intense right now?", rationale="Kept exploration with the help-seeker.", next_move="Offer two choices."),
-                BoundaryScorePayload(boundary_key="RELATIONSHIP", observed=False, rationale="Not elicited."),
-                BoundaryScorePayload(boundary_key="SAFETY", observed=False, rationale="Not elicited."),
-            ],
-            what_worked=["Warm opening", "Strong validation"],
-            next_boundary_moves=["Summarise earlier", "Offer a collaborative choice"],
-            review_items=[
-                FeedbackReviewItemPayload(
-                    trainee_turn_number=1,
-                    issue_label="Could go one step further",
-                    why_it_matters="A slightly more specific follow-up would deepen exploration without becoming clinical.",
-                    better_reply="Thank you for telling me. What part of it has felt hardest to carry on your own?",
-                )
-            ],
-        )
-
-        class FakeResponses:
-            def __init__(self):
-                self.last_kwargs = None
-
-            def parse(self, **kwargs):
-                self.last_kwargs = kwargs
-                return SimpleNamespace(output_parsed=payload)
-
-        fake_responses = FakeResponses()
-        fake_client = SimpleNamespace(responses=fake_responses)
-
-        with patch("training.services.ai._openai_client", return_value=fake_client):
-            feedback = generate_feedback(session)
-
-        self.assertEqual(feedback.overall_score, 3)
-        self.assertEqual(feedback.scores.count(), 3)
-        self.assertEqual(feedback.review_items.count(), 1)
-        self.assertEqual(feedback.generation_source, Feedback.GenerationSources.OPENAI)
-        self.assertEqual(
-            feedback.review_items.first().source,
-            Feedback.GenerationSources.OPENAI,
-        )
-        self.assertEqual(
-            feedback.review_items.first().better_reply,
-            "Thank you for telling me. What part of it has felt hardest to carry on your own?",
-        )
-        self.assertEqual(fake_responses.last_kwargs["model"], "test-model")
-        self.assertIs(fake_responses.last_kwargs["text_format"], FeedbackPayload)
-        system_prompt = fake_responses.last_kwargs["input"][0]["content"]
-        user_prompt = fake_responses.last_kwargs["input"][1]["content"]
-        self.assertIn(scenario_feedback_prompt.context, system_prompt)
-        self.assertIn(scenario_feedback_prompt.method, system_prompt)
-        self.assertIn(
-            boundary_framework_for(session.scenario.boundary_type)["canonical_name"],
-            user_prompt,
-        )
-        self.assertIn(
-            "Session turn 1 | AI Help-seeker turn 1: I have been feeling so overwhelmed lately.",
-            user_prompt,
-        )
-        self.assertIn(
-            "Session turn 2 | Trainee turn 1: Thank you for sharing that. What feels most intense right now?",
-            user_prompt,
-        )
-        self.assertIn("Boundary Skills Rubric", system_prompt)
-        self.assertIn("Score 5:", system_prompt)
-        self.assertIn("Agency Boundary", system_prompt)
 
     @override_settings(
         GEMINI_API_KEY="test-gemini-key",
@@ -2098,503 +2010,14 @@ class LLMServiceTests(TrainingFlowBase):
         self.assertEqual(config.max_output_tokens, 320)
         self.assertEqual(config.thinking_config.thinking_budget, 0)
 
-    @override_settings(
-        GEMINI_API_KEY="test-gemini-key",
-        GOOGLE_MODEL="gemini-2.5-flash",
-        OPENAI_API_KEY="",
-        LLM_PROVIDER="google",
-    )
-    def test_generate_feedback_calls_google_with_structured_schema(self):
-        session = self.create_session(status=TrainingSession.Statuses.COMPLETED)
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="I am exhausted and I do not know how to ask for help.",
-            response_source=Message.ResponseSources.GEMINI,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="Thanks for telling me. What feels hardest to hold on your own?",
-            response_source=Message.ResponseSources.USER_INPUT,
-        )
-
-        payload = FeedbackPayload(
-            boundary_scores=[
-                BoundaryScorePayload(boundary_key="AGENCY", observed=True, score=4, evidence="What feels hardest to hold on your own?", rationale="Preserved agency.", next_move="Offer choices."),
-                BoundaryScorePayload(boundary_key="RELATIONSHIP", observed=False, rationale="Not elicited."),
-                BoundaryScorePayload(boundary_key="SAFETY", observed=False, rationale="Not elicited."),
-            ],
-            what_worked=["Warm validation", "Clear pacing"],
-            next_boundary_moves=["Summarise earlier", "Add one open question"],
-            review_items=[
-                FeedbackReviewItemPayload(
-                    trainee_turn_number=1,
-                    issue_label="Referral could be more grounded",
-                    why_it_matters="Specific next-step language usually feels safer than broad signposting.",
-                    better_reply="You do not have to figure this out alone tonight. We can think through one concrete support option together.",
-                )
-            ],
-        )
-
-        class FakeModels:
-            def __init__(self):
-                self.last_kwargs = None
-
-            def generate_content(self, **kwargs):
-                self.last_kwargs = kwargs
-                return SimpleNamespace(parsed=payload, text=payload.model_dump_json())
-
-        fake_models = FakeModels()
-        fake_client = SimpleNamespace(models=fake_models)
-
-        with patch("training.services.ai._google_client", return_value=fake_client):
-            feedback = generate_feedback(session)
-
-        self.assertEqual(feedback.overall_score, 3)
-        self.assertEqual(feedback.scores.count(), 3)
-        self.assertEqual(feedback.review_items.count(), 1)
-        self.assertEqual(feedback.generation_source, Feedback.GenerationSources.GEMINI)
-        self.assertEqual(
-            feedback.review_items.first().source,
-            Feedback.GenerationSources.GEMINI,
-        )
-        self.assertEqual(fake_models.last_kwargs["model"], "gemini-2.5-flash")
-        self.assertIn(
-            boundary_framework_for(session.scenario.boundary_type)["canonical_name"],
-            fake_models.last_kwargs["contents"],
-        )
-        config = fake_models.last_kwargs["config"]
-        self.assertEqual(config.response_mime_type, "application/json")
-        self.assertIs(config.response_schema, FeedbackPayload)
-        self.assertIn(
-            get_prompt_for_type('FEEDBACK', session.scenario).method,
-            config.system_instruction,
-        )
-        self.assertIn("Boundary Skills Rubric", config.system_instruction)
-        self.assertIn("Score 5:", config.system_instruction)
-        self.assertIn("Agency Boundary", config.system_instruction)
-
-    @override_settings(
-        OPENAI_API_KEY="test-key",
-        OPENAI_MODEL="test-model",
-        GEMINI_API_KEY="",
-        LLM_PROVIDER="openai",
-    )
-    def test_feedback_ignores_model_invented_evidence_and_uses_server_evidence(self):
-        session = self.create_session(status=TrainingSession.Statuses.COMPLETED)
-        trainee_message = Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="What would feel most helpful for us to explore together?",
-        )
-        payload = FeedbackPayload(
-            boundary_scores=[
-                BoundaryScorePayload(
-                    boundary_key="AGENCY",
-                    observed=True,
-                    score=5,
-                    evidence="I gave you three clear instructions.",
-                    rationale="This evidence was invented.",
-                    next_move="Continue.",
-                ),
-                BoundaryScorePayload(boundary_key="RELATIONSHIP", observed=False),
-                BoundaryScorePayload(boundary_key="SAFETY", observed=False),
-            ],
-            what_worked=[],
-            next_boundary_moves=[],
-        )
-
-        class FakeResponses:
-            def parse(self, **kwargs):
-                return SimpleNamespace(output_parsed=payload)
-
-        with patch(
-            "training.services.ai._openai_client",
-            return_value=SimpleNamespace(responses=FakeResponses()),
-        ):
-            feedback = generate_feedback(session)
-
-        agency = feedback.scores.get(criterion=FeedbackScore.Criteria.AGENCY)
-        self.assertTrue(agency.observed)
-        self.assertEqual(agency.score, 3)
-        self.assertIn("Turn 1", agency.evidence)
-        self.assertIn(trainee_message.content, agency.evidence)
-        self.assertNotIn("three clear instructions", agency.evidence)
-        self.assertNotIn("invented", agency.rationale.lower())
-        self.assertEqual(feedback.overall_score, 3)
-
-    @override_settings(
-        OPENAI_API_KEY="test-key",
-        OPENAI_MODEL="test-model",
-        GEMINI_API_KEY="",
-        LLM_PROVIDER="openai",
-    )
-    def test_feedback_uses_server_selected_verbatim_trainee_evidence(self):
-        session = self.create_session(status=TrainingSession.Statuses.COMPLETED)
-        trainee_reply = (
-            "That sounds overwhelming. What part of the decision feels most "
-            "frightening right now?"
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content=trainee_reply,
-        )
-        payload = FeedbackPayload(
-            boundary_scores=[
-                BoundaryScorePayload(
-                    boundary_key="AGENCY",
-                    observed=True,
-                    score=4,
-                    evidence=(
-                        "Trainee turn 1: \u201cWhat part of the decision feels most "
-                        "frightening right now?\u201d"
-                    ),
-                    rationale="The question preserves the help-seeker's agency.",
-                    next_move="Continue exploring their own priorities.",
-                ),
-                BoundaryScorePayload(boundary_key="RELATIONSHIP", observed=False),
-                BoundaryScorePayload(boundary_key="SAFETY", observed=False),
-            ],
-            what_worked=["The trainee used an open question."],
-            next_boundary_moves=["Explore the help-seeker's criteria."],
-        )
-
-        class FakeResponses:
-            def parse(self, **kwargs):
-                return SimpleNamespace(output_parsed=payload)
-
-        with patch(
-            "training.services.ai._openai_client",
-            return_value=SimpleNamespace(responses=FakeResponses()),
-        ):
-            feedback = generate_feedback(session)
-
-        agency = feedback.scores.get(criterion=FeedbackScore.Criteria.AGENCY)
-        self.assertTrue(agency.observed)
-        self.assertEqual(agency.score, 3)
-        selected_quote = (
-            "What part of the decision feels most frightening right now?"
-        )
-        self.assertIn("Turn 1", agency.evidence)
-        self.assertIn(selected_quote, agency.evidence)
-        self.assertIn(selected_quote, trainee_reply)
-        self.assertEqual(feedback.overall_score, 3)
-
-    @override_settings(
-        OPENAI_API_KEY="test-key",
-        OPENAI_MODEL="test-model",
-        GEMINI_API_KEY="",
-        LLM_PROVIDER="openai",
-    )
-    def test_invalid_empty_live_feedback_degrades_to_placeholder_when_refresh_fails(self):
-        session = self.create_session(status=TrainingSession.Statuses.COMPLETED)
-        user_message = Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="What would matter most to you when comparing those options?",
-        )
-        feedback = Feedback.objects.create(
-            session=session,
-            overall_score=None,
-            strengths="A model-generated strength.",
-            improvements="A model-generated improvement.",
-            generation_source=Feedback.GenerationSources.OPENAI,
-        )
-        FeedbackScore.objects.create(
-            feedback=feedback,
-            criterion=FeedbackScore.Criteria.AGENCY,
-            observed=False,
-            score=None,
-        )
-        FeedbackReviewItem.objects.create(
-            feedback=feedback,
-            message=user_message,
-            turn_index=1,
-            message_excerpt=user_message.content,
-            issue_label="Agency evidence",
-            why_it_matters="This keeps the decision with the help-seeker.",
-            better_reply="What feels most important to you?",
-            boundary_key=FeedbackReviewItem.BoundaryKeys.AGENCY,
-            source=Feedback.GenerationSources.OPENAI,
-        )
-
-        with patch(
-            "training.services.ai._live_feedback_payload",
-            side_effect=RuntimeError("temporary provider failure"),
-        ):
-            refreshed = generate_feedback(session)
-
-        self.assertEqual(
-            refreshed.generation_source,
-            Feedback.GenerationSources.PLACEHOLDER,
-        )
-        self.assertTrue(
-            refreshed.scores.filter(observed=True, score=3).exists()
-        )
-        self.assertGreater(refreshed.overall_score, 0)
-
-    @override_settings(
-        OPENAI_API_KEY="test-key",
-        OPENAI_MODEL="test-model",
-        GEMINI_API_KEY="",
-        LLM_PROVIDER="openai",
-    )
-    def test_generate_feedback_calibrates_obvious_boundary_violations_downward(self):
-        burnout = Scenario.objects.create(
-            title="Burnout Calibration",
-            description="Calibration check.",
-            boundary_type=Scenario.BoundaryTypes.RELATIONSHIP,
-            estimated_duration_min=18,
-            learning_objectives="Name limits\nOffer alternatives",
-            is_active=True,
-        )
-        session = self.create_session(
-            scenario=burnout,
-            status=TrainingSession.Statuses.COMPLETED,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="Can you stay on call for me this weekend? You are the only person I can talk to.",
-            response_source=Message.ResponseSources.OPENAI,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="Sure, message me anytime and I will stay up with you all weekend.",
-            response_source=Message.ResponseSources.USER_INPUT,
-        )
-
-        payload = FeedbackPayload(
-            boundary_scores=[
-                BoundaryScorePayload(boundary_key="AGENCY", observed=False, rationale="Not elicited."),
-                BoundaryScorePayload(boundary_key="RELATIONSHIP", observed=True, score=1, evidence="I will stay up with you all weekend.", rationale="Unlimited availability removes a sustainable limit.", next_move="Name a limit and an alternative."),
-                BoundaryScorePayload(boundary_key="SAFETY", observed=False, rationale="Not elicited."),
-            ],
-            what_worked=["The reply was warm"],
-            next_boundary_moves=["State a sustainable availability limit", "Offer one alternative support"],
-            review_items=[
-                FeedbackReviewItemPayload(
-                    trainee_turn_number=1,
-                    issue_label="Availability Boundary",
-                    why_it_matters="The reply makes the trainee the main support and removes a sustainable limit.",
-                    better_reply="I care about you, and I cannot stay available all weekend, but I can help you think about one other support option for tonight.",
-                )
-            ],
-        )
-
-        class FakeResponses:
-            def __init__(self):
-                self.last_kwargs = None
-
-            def parse(self, **kwargs):
-                self.last_kwargs = kwargs
-                return SimpleNamespace(output_parsed=payload)
-
-        fake_responses = FakeResponses()
-        fake_client = SimpleNamespace(responses=fake_responses)
-
-        with patch("training.services.ai._openai_client", return_value=fake_client):
-            feedback = generate_feedback(session)
-
-        self.assertEqual(
-            feedback.scores.get(criterion=FeedbackScore.Criteria.RELATIONSHIP).score,
-            1,
-        )
-        self.assertEqual(feedback.overall_score, 1)
-
-    @override_settings(
-        OPENAI_API_KEY="test-key",
-        OPENAI_MODEL="test-model",
-        GEMINI_API_KEY="",
-        LLM_PROVIDER="openai",
-    )
-    def test_generate_feedback_refreshes_placeholder_feedback_with_live_openai_review_items(self):
-        session = self.create_session(status=TrainingSession.Statuses.COMPLETED)
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="I feel like I am holding too much on my own.",
-            response_source=Message.ResponseSources.PLACEHOLDER,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="I care about you, and I want to understand what has been weighing on you most tonight.",
-            response_source=Message.ResponseSources.USER_INPUT,
-        )
-
-        feedback = Feedback.objects.create(
-            session=session,
-            overall_score=3,
-            strengths="Placeholder strength 1\nPlaceholder strength 2\nPlaceholder strength 3",
-            improvements="Placeholder improvement 1\nPlaceholder improvement 2\nPlaceholder improvement 3",
-            generation_source=Feedback.GenerationSources.PLACEHOLDER,
-        )
-        FeedbackScore.objects.create(
-            feedback=feedback,
-            criterion=FeedbackScore.Criteria.EMPATHY,
-            score=70,
-        )
-        FeedbackScore.objects.create(
-            feedback=feedback,
-            criterion=FeedbackScore.Criteria.BOUNDARY_AWARENESS,
-            score=70,
-        )
-        FeedbackScore.objects.create(
-            feedback=feedback,
-            criterion=FeedbackScore.Criteria.REFERRAL_AWARENESS,
-            score=70,
-        )
-        FeedbackScore.objects.create(
-            feedback=feedback,
-            criterion=FeedbackScore.Criteria.COMMUNICATION_SKILLS,
-            score=70,
-        )
-        FeedbackReviewItem.objects.create(
-            feedback=feedback,
-            message=None,
-            turn_index=1,
-            message_excerpt="placeholder",
-            issue_label="Placeholder issue",
-            why_it_matters="Placeholder explanation",
-            better_reply="Placeholder reply",
-            source=Feedback.GenerationSources.PLACEHOLDER,
-        )
-
-        payload = FeedbackPayload(
-            boundary_scores=[
-                BoundaryScorePayload(boundary_key="AGENCY", observed=True, score=4, evidence="what has been weighing on you most tonight", rationale="Kept the focus on the help-seeker.", next_move="Offer a choice."),
-                BoundaryScorePayload(boundary_key="RELATIONSHIP", observed=False, rationale="Not elicited."),
-                BoundaryScorePayload(boundary_key="SAFETY", observed=False, rationale="Not elicited."),
-            ],
-            what_worked=["Warm validation", "Clear boundary language"],
-            next_boundary_moves=["Add one practical step", "Check support options earlier"],
-            review_items=[
-                FeedbackReviewItemPayload(
-                    trainee_turn_number=1,
-                    issue_label="Could be even more concrete",
-                    why_it_matters="Naming one practical next step would help the help-seeker feel less alone in the moment.",
-                    better_reply="I care about you, and I do not want you carrying this alone tonight. Would it help if we think of one person or one service you could reach out to after this?",
-                )
-            ],
-        )
-
-        class FakeResponses:
-            def parse(self, **kwargs):
-                return SimpleNamespace(output_parsed=payload)
-
-        fake_client = SimpleNamespace(responses=FakeResponses())
-
-        with patch("training.services.ai._openai_client", return_value=fake_client):
-            refreshed = generate_feedback(session)
-
-        self.assertEqual(refreshed.id, feedback.id)
-        self.assertEqual(refreshed.overall_score, 3)
-        self.assertEqual(refreshed.generation_source, Feedback.GenerationSources.OPENAI)
-        self.assertEqual(refreshed.review_items.count(), 1)
-        self.assertEqual(
-            refreshed.review_items.first().source,
-            Feedback.GenerationSources.OPENAI,
-        )
-        self.assertIn("one practical next step", refreshed.review_items.first().why_it_matters)
-        self.assertIn("one person or one service", refreshed.review_items.first().better_reply)
-
-    @override_settings(
-        OPENAI_API_KEY="",
-        GEMINI_API_KEY="",
-        LLM_PROVIDER="openai",
-    )
-    def test_reflection_guidance_uses_fallback_once_without_api_key(self):
-        session = self.create_session(status=TrainingSession.Statuses.COMPLETED)
-        user_message = Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="I can stay for a little while, then we can identify another support.",
-        )
-        feedback = Feedback.objects.create(
-            session=session,
-            overall_score=4,
-            strengths="Named a sustainable limit.",
-            improvements="Make the next step more specific.",
-        )
-        FeedbackScore.objects.create(
-            feedback=feedback,
-            criterion=FeedbackScore.Criteria.RELATIONSHIP,
-            score=4,
-            observed=True,
-            evidence=user_message.content,
-            rationale="The trainee combined care with a time limit.",
-            next_move="Name one concrete alternative support.",
-        )
-
-        first = generate_reflection_guidance(session, feedback)
-        second = generate_reflection_guidance(session, feedback)
-
-        self.assertEqual(first.id, second.id)
-        self.assertEqual(first.generation_source, ReflectionGuidance.GenerationSources.PLACEHOLDER)
-        self.assertTrue(first.notice_prompt.endswith("?"))
-        self.assertTrue(first.action_prompt.endswith("?"))
 
 
-    @override_settings(
-        OPENAI_API_KEY="test-key",
-        OPENAI_MODEL="test-model",
-        GEMINI_API_KEY="",
-        LLM_PROVIDER="openai",
-    )
-    def test_reflection_guidance_uses_verified_session_context(self):
-        session = self.create_session(status=TrainingSession.Statuses.COMPLETED)
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="I cannot stay all night, but we can plan who you contact next.",
-        )
-        feedback = Feedback.objects.create(
-            session=session,
-            overall_score=4,
-            strengths="Set a clear limit.",
-            improvements="Check that the next support is available.",
-        )
-        FeedbackScore.objects.create(
-            feedback=feedback,
-            criterion=FeedbackScore.Criteria.RELATIONSHIP,
-            score=4,
-            observed=True,
-            evidence="I cannot stay all night",
-            rationale="Clear availability boundary.",
-            next_move="Confirm the alternative support.",
-        )
-        payload = ReflectionGuidancePayload(
-            notice_prompt="What did you notice when you named how long you could stay?",
-            action_prompt="How would you check the alternative support next time?",
-        )
 
-        class FakeResponses:
-            def __init__(self):
-                self.last_kwargs = None
 
-            def parse(self, **kwargs):
-                self.last_kwargs = kwargs
-                return SimpleNamespace(output_parsed=payload)
 
-        fake_responses = FakeResponses()
-        with patch(
-            "training.services.ai._openai_client",
-            return_value=SimpleNamespace(responses=fake_responses),
-        ):
-            guidance = generate_reflection_guidance(session, feedback)
 
-        self.assertEqual(guidance.generation_source, ReflectionGuidance.GenerationSources.OPENAI)
-        supplied_context = fake_responses.last_kwargs["input"][1]["content"]
-        self.assertIn("I cannot stay all night", supplied_context)
-        self.assertIn("Clear availability boundary", supplied_context)
-        self.assertIs(
-            fake_responses.last_kwargs["text_format"],
-            ReflectionGuidancePayload,
-        )
+
+
 
 
 class ProgressServiceTests(TrainingFlowBase):
@@ -3057,7 +2480,7 @@ class SeedCommandTests(TestCase):
         for prompt_type in prompt_types:
             self.assertSetEqual(
                 set(ROLEPLAY_SCENARIOS if prompt_type == "ROLE_PLAY" else SCENARIO_PROMPT_CONTEXTS[prompt_type]),
-                fixed_types if prompt_type == "ROLE_PLAY" else fixed_types | {"INTEGRATED"},
+                fixed_types if prompt_type == "ROLE_PLAY" else set(),
             )
             for boundary_type in fixed_types:
                 parts = default_prompt_parts(prompt_type, boundary_type)
@@ -3374,7 +2797,7 @@ class PageSmokeTests(TestCase):
 
         for url, text in pages:
             with self.subTest(url=url):
-                response = self.client.get(url)
+                response = self.client.get(url, follow=True)
                 self.assertEqual(response.status_code, 200)
                 self.assertContains(response, text)
 
@@ -3443,7 +2866,7 @@ class PageSmokeTests(TestCase):
 
         for url, text in pages:
             with self.subTest(url=url):
-                response = self.client.get(url)
+                response = self.client.get(url, follow=True)
                 self.assertEqual(response.status_code, 200)
                 self.assertContains(response, text)
 
@@ -3495,7 +2918,7 @@ class PageSmokeTests(TestCase):
         ]
         for url, removed_copy in trainee_pages:
             with self.subTest(url=url):
-                response = self.client.get(url)
+                response = self.client.get(url, follow=True)
                 self.assertEqual(response.status_code, 200)
                 for text in removed_copy:
                     self.assertNotContains(response, text)
@@ -3517,7 +2940,7 @@ class PageSmokeTests(TestCase):
         ]
         for url, removed_copy in public_pages:
             with self.subTest(url=url):
-                response = self.client.get(url)
+                response = self.client.get(url, follow=True)
                 self.assertEqual(response.status_code, 200)
                 self.assertNotContains(response, removed_copy)
 
@@ -3550,7 +2973,7 @@ class PageSmokeTests(TestCase):
         ]
         for url, removed_copy in admin_pages:
             with self.subTest(url=url):
-                response = self.client.get(url)
+                response = self.client.get(url, follow=True)
                 self.assertEqual(response.status_code, 200)
                 self.assertNotContains(response, removed_copy)
 
@@ -3577,9 +3000,9 @@ class PageSmokeTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Conversation evidence")
-        self.assertContains(response, "assessed moment")
-        self.assertContains(response, "Turn ")
+        self.assertContains(response, "Conversation review")
+        self.assertContains(response, "review-transcript")
+        self.assertEqual(len(response.context["timeline"]), self.completed_session.messages.count())
 
     def test_dashboard_renders_wiki_navigation_and_unique_section_targets(self):
         self.client.force_login(self.trainee)
@@ -3748,13 +3171,17 @@ class PageSmokeTests(TestCase):
 
     def test_session_review_combines_feedback_and_reflection(self):
         self.client.force_login(self.trainee)
+        trainee_message = self.completed_session.messages.filter(sender_type='USER').first()
+        FeedbackReviewItem.objects.create(feedback=self.completed_session.feedback, message=trainee_message,
+            turn_index=1, message_excerpt=trainee_message.content, issue_label='Feedback',
+            why_it_matters='Keep choice open.', better_reply='What would feel helpful to you?')
 
         response = self.client.get(reverse("session_review", kwargs={"session_id": self.completed_session.id}))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Boundary notebook")
-        self.assertContains(response, "A better reply")
-        self.assertContains(response, "What boundary did I notice?")
+        self.assertContains(response, "My notes")
+        self.assertContains(response, "An alternative reply to consider")
+        self.assertContains(response, "Reflect with AI")
 
     def test_demo_chat_page_shows_quick_reply_tools(self):
         self.client.force_login(self.trainee)
@@ -3822,7 +3249,7 @@ class PageSmokeTests(TestCase):
         response = self.client.get(reverse("chat", kwargs={"session_id": self.chat_session.id}))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Boundary Coach")
+        self.assertContains(response, "Live Feedback")
         self.assertContains(response, "Listening in progress")
         self.assertNotContains(response, "Live training support")
         self.assertNotContains(response, "Live Boundary Read")
@@ -3848,13 +3275,13 @@ class PageSmokeTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, "Boundary Skills Rubric")
-        self.assertContains(response, "Expected move")
-        self.assertContains(response, "Progress")
-        self.assertContains(response, "Details")
+        self.assertNotContains(response, "Expected move")
+        self.assertContains(response, "Live Feedback")
+        self.assertNotContains(response, "Expected move")
         self.assertNotContains(response, "Session process")
         self.assertNotContains(response, "Turn-matched coaching")
         self.assertNotContains(response, "Evidence-verified Judge")
-        self.assertContains(response, "Not reached yet")
+        self.assertContains(response, 'data-feedback-mode="terminal"')
         self.assertNotContains(response, "not a clinical judgement")
 
     def test_chat_page_renders_collapsible_guidance_sidebar(self):
@@ -3870,7 +3297,7 @@ class PageSmokeTests(TestCase):
         self.assertContains(response, 'class="peertrain-guidance-section"', count=2, html=False)
         self.assertNotContains(response, "SCENARIO SUPPORT")
         self.assertContains(response, f'data-session-id="{self.chat_session.id}"', html=False)
-        self.assertContains(response, "/static/js/chat.js?v=20261028-3")
+        self.assertContains(response, "/static/js/chat.js?v=20261103-1")
         self.assertContains(response, "data-guidance-toggle", count=2, html=False)
         for former_level in ["Beginner", "Intermediate", "Advanced"]:
             self.assertNotContains(response, former_level)
@@ -3902,7 +3329,7 @@ class PageSmokeTests(TestCase):
         self.assertContains(response, 'data-boundary-coach-layout', html=False)
         self.assertContains(response, 'data-boundary-coach-panel', html=False)
         self.assertContains(response, 'data-boundary-coach-rail', html=False)
-        self.assertContains(response, 'data-bs-target="#peertrain-boundary-coach"', html=False)
+        self.assertNotContains(response, 'data-bs-target="#peertrain-boundary-coach"', html=False)
         self.assertContains(response, 'aria-controls="peertrain-boundary-coach-panel"', count=2, html=False)
         self.assertContains(response, f'data-user-id="{self.trainee.id}"', html=False)
         self.assertContains(response, f'data-session-id="{self.chat_session.id}"', html=False)
@@ -3915,7 +3342,7 @@ class PageSmokeTests(TestCase):
         response = self.client.get(reverse("chat", kwargs={"session_id": self.chat_session.id}))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'data-boundary-status', count=1)
+        self.assertNotContains(response, 'data-boundary-status')
         self.assertContains(response, 'data-boundary-compact-status', count=2)
         self.assertContains(response, "Listening in progress")
         self.assertContains(response, "peertrain-assessment-neutral")
@@ -3942,9 +3369,9 @@ class PageSmokeTests(TestCase):
         from training.templatetags.assessment_ui import assessment_status
 
         self.assertContains(response, assessment_status(indicator.score)["label"])
-        self.assertContains(response, 'data-boundary-status', count=1)
+        self.assertNotContains(response, 'data-boundary-status')
         self.assertNotContains(response, f"Level {indicator.score}")
-        self.assertContains(response, ">Focus<", html=False)
+        self.assertNotContains(response, ">Focus<", html=False)
         self.assertNotContains(response, "Current area to strengthen")
         self.assertNotContains(response, "peertrain-boundary-watchpoint-panel")
 
@@ -3986,30 +3413,16 @@ class PageSmokeTests(TestCase):
 
     def test_history_detail_shows_saved_reflection(self):
         self.client.force_login(self.trainee)
-        Reflection.objects.update_or_create(
-            session=self.completed_session,
-            defaults={
-                "prompt": get_prompt_for_type(
-                    'REFLECTION',
-                    self.completed_session.scenario,
-                ),
-                "reflection_text": "I would keep the warm tone and make the next-step support option more concrete.",
-                "action_plan": "I will name the boundary and one next step.",
-            },
-        )
-
-        response = self.client.get(
-            reverse("history_detail", kwargs={"session_id": self.completed_session.id})
-        )
-
+        Reflection.objects.update_or_create(session=self.completed_session, defaults={
+            "reflection_text": "I would keep the warm tone and make the next-step support option more concrete.",
+        })
+        response = self.client.get(reverse("history_detail", args=[self.completed_session.id]), follow=True)
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Reflection")
-        self.assertContains(response, "I will name the boundary and one next step.")
-        self.assertContains(response, "history-review-accordion")
+        self.assertContains(response, "I would keep the warm tone")
+        self.assertContains(response, "review-transcript")
         self.assertContains(response, "peertrain-ai-avatar")
-        self.assertContains(response, "peertrain-history-user-avatar")
-        self.assertContains(response, self.completed_session.scenario.display_title)
-        self.assertContains(response, "learning.css?v=20261027-2", html=False)
+        self.assertContains(response, "review.css?v=20261103-2")
 
     def test_progress_page_explains_empty_state_for_new_trainee(self):
         empty_trainee = User.objects.create_user(
@@ -4040,7 +3453,7 @@ class PageSmokeTests(TestCase):
 
         for url, text in pages:
             with self.subTest(url=url):
-                response = self.client.get(url)
+                response = self.client.get(url, follow=True)
                 self.assertEqual(response.status_code, 200)
                 self.assertContains(response, text)
 

@@ -3,7 +3,6 @@ from django import forms
 from .models import (
     BoundaryTurnEvaluation,
     PlatformSetting,
-    Reflection,
 )
 
 
@@ -37,34 +36,6 @@ class ChatMessageForm(forms.Form):
             }
         ),
     )
-
-
-class ReflectionForm(StyledModelForm):
-    class Meta:
-        model = Reflection
-        fields = ["reflection_text", "action_plan"]
-        labels = {
-            "reflection_text": "What boundary did I notice?",
-            "action_plan": "What will I do next time?",
-        }
-        widgets = {
-            "reflection_text": forms.Textarea(
-                attrs={
-                    "rows": 4,
-                    "placeholder": "Describe the boundary moment you noticed in this conversation.",
-                }
-            ),
-            "action_plan": forms.Textarea(
-                attrs={
-                    "rows": 4,
-                    "placeholder": "Write one concrete boundary action you will try next time.",
-                }
-            ),
-        }
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._set_widget_classes()
 
 
 class PlatformSettingForm(StyledModelForm):

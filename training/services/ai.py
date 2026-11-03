@@ -43,7 +43,6 @@ from training.models import (
     FeedbackReviewItem,
     FeedbackScore,
     Message,
-    ReflectionGuidance,
     Scenario,
     TrainingSession,
 )
@@ -106,11 +105,6 @@ class FeedbackReviewItemPayload(BaseModel):
 
 
 FeedbackPayload.model_rebuild()
-
-
-class ReflectionGuidancePayload(BaseModel):
-    notice_prompt: str
-    action_prompt: str
 
 
 @dataclass(frozen=True)
@@ -1403,58 +1397,23 @@ def build_boundary_map_indicator(session) -> BoundaryMapIndicator:
 
 
 def build_boundary_status_indicator(session) -> BoundaryStatusIndicator:
-    latest_user_message = _latest_user_message(session)
-    if latest_user_message is None:
-        return BoundaryStatusIndicator(
-            score=None,
-            tone="neutral",
-            label="Waiting for first reply",
-            headline="No live boundary read yet",
-            summary=_boundary_status_summary(session.scenario.boundary_type, None),
-            cue=_boundary_status_cue(session.scenario.boundary_type, None),
-        )
-    boundary_map = build_boundary_map_indicator(session)
-    score = boundary_map.scenario_focus_score
-    tone, label = _boundary_score_meta(score)
-    if boundary_map.scenario_focus_key == "integrated":
-        focus_item = next(
-            (item for item in boundary_map.dimensions if item.observed),
-            None,
-        )
-    else:
-        focus_item = next(
-            (
-                item
-                for item in boundary_map.dimensions
-                if item.key == boundary_map.scenario_focus_key
-            ),
-            None,
-        )
-    summary = (
-        (
-            f"{focus_item.outcome_label}: {focus_item.summary}"
-            if focus_item and focus_item.expected_move_label
-            else _boundary_status_summary(session.scenario.boundary_type, score)
-        )
-    )
-    cue = (
-        f"Expected move: {focus_item.expected_move_label}"
-        if focus_item and focus_item.expected_move_label
-        else boundary_map.scenario_focus_cue
-    )
-
-    return BoundaryStatusIndicator(
-        score=score,
-        tone=tone,
-        label=label,
-        headline=f"{boundary_map.scenario_focus_name}: {label}",
-        summary=summary,
-        cue=cue,
-    )
+    from training.models import TurnAssessment
+    from training.templatetags.assessment_ui import assessment_status
+    latest = TurnAssessment.objects.filter(trainee_message__session=session).last()
+    level = latest.overall_status_level if latest else 0
+    status = assessment_status(level)
+    return BoundaryStatusIndicator(score=level, tone=status['tone'], label=status['label'],
+        headline=status['label'], summary=latest.feedback_text if latest else '', cue='')
 
 
 def _roleplay_system_prompt(session, prompt, user_message: str, *, opening=False) -> str:
     persona = persona_prompt_for(session.scenario.boundary_type, session.persona)
+    from training.models import TurnAssessment
+    assessment = TurnAssessment.objects.filter(trainee_message__session=session).last()
+    cue = assessment.roleplay_cue if assessment and not opening else ''
+    if cue:
+        persona += ('\nOptional context cue, only if consistent with the established persona: ' + cue
+                    + '\nRespond naturally. Do not manufacture challenges or change established risk facts.')
     return "\n\n".join((
         prompt.context,
         persona,
@@ -1825,6 +1784,13 @@ def generate_ai_opening(session):
         used_fallback = True
         response_source = Message.ResponseSources.PLACEHOLDER
 
+    from training.services.assessment import checked_reply
+    opening_text, accepted = checked_reply(session, opening_text)
+    if not accepted:
+        used_fallback = True
+        response_source = Message.ResponseSources.PLACEHOLDER
+        fallback_notice = "The simulated reply could not be verified. A safe pause is shown."
+
     # Serialize the final save, including on SQLite, without holding a lock during the LLM call.
     with transaction.atomic():
         TrainingSession.objects.filter(pk=session.pk).update(persona=F("persona"))
@@ -1894,6 +1860,12 @@ def generate_ai_reply(session, user_message):
         used_fallback = True
         response_source = Message.ResponseSources.PLACEHOLDER
 
+    from training.services.assessment import checked_reply
+    ai_text, accepted = checked_reply(session, ai_text)
+    if not accepted:
+        used_fallback = True
+        response_source = Message.ResponseSources.PLACEHOLDER
+        fallback_notice = "The simulated reply could not be verified. A safe pause is shown."
     message = Message.objects.create(
         session=session,
         sender_type=Message.SenderTypes.AI,
@@ -2187,8 +2159,6 @@ def _apply_feedback_payload(
         ]
     )
 
-    # Guidance is derived from feedback, so a successful feedback refresh invalidates it.
-    ReflectionGuidance.objects.filter(session=session).delete()
     _replace_feedback_scores(
         feedback,
         calibrated_payload,
@@ -2253,404 +2223,6 @@ def regrade_feedback_deterministically(feedback):
     return feedback
 
 
-def _live_feedback_payload(session, prompt) -> tuple[FeedbackPayload, str]:
-    provider = _provider()
-    if provider == "google":
-        if not settings.GEMINI_API_KEY:
-            raise ValueError("GEMINI_API_KEY is not configured.")
-        return _google_feedback_payload(session, prompt), _feedback_source_for_provider(provider)
-    if not settings.OPENAI_API_KEY:
-        raise ValueError("OPENAI_API_KEY is not configured.")
-    return _openai_feedback_payload(session, prompt), _feedback_source_for_provider(provider)
-
-
-def _should_refresh_existing_feedback(feedback) -> bool:
-    if not _live_feedback_available():
-        return False
-    if feedback.generation_source == Feedback.GenerationSources.PLACEHOLDER:
-        return True
-    if not feedback.review_items.exists():
-        return True
-    has_trainee_messages = feedback.session.messages.filter(
-        sender_type=Message.SenderTypes.USER,
-    ).exists()
-    has_observed_score = feedback.scores.filter(
-        observed=True,
-        score__isnull=False,
-    ).exists()
-    if has_trainee_messages and not has_observed_score:
-        return True
-    return feedback.review_items.filter(source=Feedback.GenerationSources.PLACEHOLDER).exists()
-
-
-def _protected_feedback_summary(session) -> str:
-    """Expose reliability-gated outcomes to the feedback writer as read-only context."""
-
-    assessments = final_feedback_assessments(session)
-    judge_run = _final_feedback_judge_run(session)
-    sections = []
-    for key in BOUNDARY_DIMENSION_ORDER:
-        assessment = assessments[key]
-        judge_detail = (
-            judge_run.resolution_details.get(key.upper(), {})
-            if judge_run is not None
-            else {}
-        )
-        if judge_detail.get("decision") in JUDGE_ACCEPTED_DECISIONS:
-            observed = assessment.observed
-            score = assessment.score
-            rationale = assessment.rationale
-            process_steps = assessment.process_steps
-            source = "evidence-grounded LLM judge"
-        else:
-            observed = assessment.observed
-            score = assessment.score
-            rationale = assessment.rationale
-            process_steps = assessment.process_steps
-            source = "deterministic fallback"
-        process = ", ".join(
-            f"{step.label}={OUTCOME_LABELS.get(step.status, step.status.replace('_', ' ').title())}"
-            for step in process_steps
-        )
-        sections.append(
-            "\n".join(
-                [
-                    f"{key.upper()}: observed={str(observed).lower()}, "
-                    f"score={score if score is not None else 'null'}, source={source}",
-                    f"Process: {process or 'No genuine opportunity reached'}",
-                    f"Protected rationale: {rationale}",
-                ]
-            )
-        )
-    return "\n\n".join(sections)
-
-
-def _openai_feedback_payload(session, prompt) -> FeedbackPayload:
-    transcript = _feedback_transcript(session)
-    scenario_focus_key = boundary_framework_for(session.scenario.boundary_type)["dimension_key"]
-    protected_summary = _protected_feedback_summary(session)
-    system_text = (
-        f"{_cmcv_prompt_layers(prompt)}\n\n"
-        f"{prompt_rubric_contract(scenario_focus_key)}\n\n"
-        "For every quoted trainee turn, first identify the need created by the immediately preceding "
-        "help-seeker message and the single boundary move that was applicable at that point. Judge "
-        "that move as met, partly met, missed, or a boundary concern. The server has already applied "
-        "these outcomes and calculated the protected scores shown below. Do not recalculate them. "
-        "Return exactly three boundary_scores in this order: AGENCY, RELATIONSHIP, SAFETY. "
-        "Copy observed and score exactly from the protected summary so the response schema remains "
-        "compatible. Add an evidence-grounded explanation and one concrete next_move. "
-        "Return no more than two what_worked items and two next_boundary_moves. "
-        "Also return up to three boundary-only review_items for the highest-leverage trainee turns. "
-        "Each review item must include trainee_turn_number, boundary_key, issue_label, "
-        "why_it_matters, and better_reply. boundary_key must be AGENCY, RELATIONSHIP, or SAFETY. "
-        "Use the exact trainee turn numbers from the transcript. "
-        "For why_it_matters, explain why that wording mattered for the named boundary. "
-        "For better_reply, write a stronger alternative for that same moment in 1 to 3 sentences. Preserve any helpful intent, sound natural and peer-level, and do not sound clinical, scripted, or like therapist advice. "
-        f"Write all free-text fields in {DEFAULT_RESPONSE_LANGUAGE}."
-    )
-    # This is where the OpenAI API call happens.
-    response = _openai_client().responses.parse(
-        model=settings.OPENAI_MODEL,
-        input=[
-            {"role": "system", "content": system_text},
-            {
-                "role": "user",
-                "content": (
-                    f"{_scenario_prompt_context(session)}\n"
-                    f"Learning objectives:\n{session.scenario.learning_objectives}\n\n"
-                    f"Protected server assessment:\n{protected_summary}\n\n"
-                    f"Transcript:\n{transcript}"
-                ),
-            },
-        ],
-        text_format=FeedbackPayload,
-    )
-    return _parsed_openai_payload(response)
-
-
-def _google_feedback_payload(session, prompt) -> FeedbackPayload:
-    transcript = _feedback_transcript(session)
-    scenario_focus_key = boundary_framework_for(session.scenario.boundary_type)["dimension_key"]
-    protected_summary = _protected_feedback_summary(session)
-    system_text = (
-        f"{_cmcv_prompt_layers(prompt)}\n\n"
-        f"{prompt_rubric_contract(scenario_focus_key)}\n\n"
-        "For every quoted trainee turn, first identify the need created by the immediately preceding "
-        "help-seeker message and the single boundary move that was applicable at that point. Judge "
-        "that move as met, partly met, missed, or a boundary concern. The server has already applied "
-        "these outcomes and calculated the protected scores shown below. Do not recalculate them. "
-        "Return exactly three boundary_scores in this order: AGENCY, RELATIONSHIP, SAFETY. "
-        "Copy observed and score exactly from the protected summary so the response schema remains "
-        "compatible. Add an evidence-grounded explanation and one concrete next_move. "
-        "Return no more than two what_worked items and two next_boundary_moves. "
-        "Also return up to three boundary-only review_items for the highest-leverage trainee turns. "
-        "Each review item must include trainee_turn_number, boundary_key, issue_label, "
-        "why_it_matters, and better_reply. boundary_key must be AGENCY, RELATIONSHIP, or SAFETY. "
-        "Use the exact trainee turn numbers from the transcript. "
-        "For why_it_matters, explain why that wording mattered for the named boundary. "
-        "For better_reply, write a stronger alternative for that same moment in 1 to 3 sentences. Preserve any helpful intent, sound natural and peer-level, and do not sound clinical, scripted, or like therapist advice. "
-        f"Write all free-text fields in {DEFAULT_RESPONSE_LANGUAGE}."
-    )
-    user_prompt = (
-        f"{_scenario_prompt_context(session)}\n"
-        f"Learning objectives:\n{session.scenario.learning_objectives}\n\n"
-        f"Protected server assessment:\n{protected_summary}\n\n"
-        f"Transcript:\n{transcript}"
-    )
-    # This is where the Google Gemini API call happens.
-    client = _google_client()
-    response = client.models.generate_content(
-        model=settings.GOOGLE_MODEL,
-        contents=user_prompt,
-        config=google_types.GenerateContentConfig(
-            system_instruction=system_text,
-            temperature=0.2,
-            response_mime_type="application/json",
-            response_schema=FeedbackPayload,
-        ),
-    )
-    return _parsed_google_payload(response)
-
-
 def generate_feedback(session):
-    try:
-        ensure_reliable_geval_run(
-            session,
-            purpose=BoundaryEvaluationRun.Purposes.FINAL,
-        )
-    except Exception:
-        logger.exception(
-            "The final boundary judge failed for session %s; "
-            "feedback will use the deterministic fallback.",
-            session.id,
-        )
-    prompt = get_prompt_for_type('FEEDBACK', scenario=session.scenario)
-    existing = getattr(session, "feedback", None)
-    if existing:
-        if _should_refresh_existing_feedback(existing):
-            try:
-                payload, generation_source = _live_feedback_payload(session, prompt)
-                return _apply_feedback_payload(existing, session, prompt, payload, generation_source)
-            except Exception:
-                logger.exception(
-                    "Could not refresh existing feedback %s for session %s using provider %s.",
-                    existing.id,
-                    session.id,
-                    _provider(),
-                )
-                has_observed_score = existing.scores.filter(
-                    observed=True,
-                    score__isnull=False,
-                ).exists()
-                if not has_observed_score:
-                    return _apply_feedback_payload(
-                        existing,
-                        session,
-                        prompt,
-                        _placeholder_feedback(session),
-                        Feedback.GenerationSources.PLACEHOLDER,
-                    )
-
-        if not existing.review_items.exists():
-            _save_feedback_review_items(
-                existing,
-                session,
-                _placeholder_review_items(session),
-                source=Feedback.GenerationSources.PLACEHOLDER,
-            )
-        return existing
-
-    try:
-        payload, generation_source = _live_feedback_payload(session, prompt)
-    except Exception:
-        logger.exception(
-            "Falling back to placeholder feedback for session %s using provider %s.",
-            session.id,
-            _provider(),
-        )
-        payload = _placeholder_feedback(session)
-        generation_source = Feedback.GenerationSources.PLACEHOLDER
-
-    feedback = Feedback.objects.create(
-        session=session,
-        overall_score=None,
-        strengths="",
-        improvements="",
-        generation_source=generation_source,
-        rubric_version=RUBRIC_VERSION,
-    )
-    return _apply_feedback_payload(feedback, session, prompt, payload, generation_source)
-
-
-def _reflection_fallback_payload(session, feedback) -> ReflectionGuidancePayload:
-    score = (
-        feedback.scores.filter(observed=True)
-        .order_by("score", "id")
-        .first()
-    )
-    boundary_label = (
-        score.get_criterion_display()
-        if score
-        else boundary_framework_for(session.scenario.boundary_type).get(
-            "canonical_name",
-            "boundary",
-        )
-    )
-    review_item = feedback.review_items.order_by("turn_index", "id").first()
-    moment = (
-        f'the reply "{review_item.message_excerpt[:120]}"'
-        if review_item and review_item.message_excerpt
-        else "one moment in this conversation"
-    )
-    return ReflectionGuidancePayload(
-        notice_prompt=(
-            f"Looking back at {moment}, what did you notice about the "
-            f"{boundary_label.lower()}?"
-        ),
-        action_prompt=(
-            f"If a similar {boundary_label.lower()} challenge happened again, "
-            "what is one specific thing you would say or do differently?"
-        ),
-    )
-
-
-def _validated_reflection_guidance(
-    payload: ReflectionGuidancePayload,
-    fallback: ReflectionGuidancePayload,
-) -> ReflectionGuidancePayload:
-    def clean_question(value, fallback_value):
-        question = re.sub(r"\s+", " ", (value or "")).strip()
-        disallowed = (
-            "the answer is",
-            "you should write",
-            "a good answer",
-            "your reflection should",
-        )
-        if (
-            not question
-            or len(question) > 360
-            or any(marker in question.casefold() for marker in disallowed)
-        ):
-            return fallback_value
-        if not question.endswith("?"):
-            question = f"{question.rstrip('.!')}?"
-        return question
-
-    return ReflectionGuidancePayload(
-        notice_prompt=clean_question(
-            payload.notice_prompt,
-            fallback.notice_prompt,
-        ),
-        action_prompt=clean_question(
-            payload.action_prompt,
-            fallback.action_prompt,
-        ),
-    )
-
-
-def _reflection_guidance_context(session, feedback) -> str:
-    score_lines = []
-    for score in feedback.scores.all():
-        if score.observed:
-            score_lines.append(
-                f"- {score.get_criterion_display()}: Score {score.score}/5; "
-                f"evidence={score.evidence}; rationale={score.rationale}; "
-                f"next move={score.next_move}"
-            )
-        else:
-            score_lines.append(f"- {score.get_criterion_display()}: not observed")
-    review_lines = [
-        f"- {item.get_boundary_key_display()}: trainee reply={item.message_excerpt}; "
-        f"why it matters={item.why_it_matters}; alternative={item.better_reply}"
-        for item in feedback.review_items.all()
-    ]
-    return (
-        f"{_scenario_prompt_context(session)}\n\n"
-        f"Transcript:\n{_feedback_transcript(session)}\n\n"
-        f"Verified feedback:\n{chr(10).join(score_lines) or '- No verified scores.'}\n\n"
-        f"Boundary review moments:\n{chr(10).join(review_lines) or '- No review items.'}"
-    )
-
-
-def _live_reflection_guidance_payload(session, feedback, prompt):
-    system_text = (
-        f"{_cmcv_prompt_layers(prompt)}\n\n"
-        "PROTECTED CONTRACT\n"
-        "Return exactly notice_prompt and action_prompt. Both must be short questions. "
-        "Do not answer for the trainee, invent evidence, grade reflection, or provide a "
-        "model reflection. Use only the supplied transcript and verified feedback."
-    )
-    context = _reflection_guidance_context(session, feedback)
-    provider = _provider()
-    if provider == "google":
-        if not settings.GEMINI_API_KEY:
-            raise ValueError("GEMINI_API_KEY is not configured.")
-        response = _google_client().models.generate_content(
-            model=settings.GOOGLE_MODEL,
-            contents=context,
-            config=google_types.GenerateContentConfig(
-                system_instruction=system_text,
-                temperature=0.3,
-                response_mime_type="application/json",
-                response_schema=ReflectionGuidancePayload,
-            ),
-        )
-        payload = getattr(response, "parsed", None)
-        if not payload:
-            payload = ReflectionGuidancePayload.model_validate_json(
-                (getattr(response, "text", "") or "").strip()
-            )
-        elif not isinstance(payload, ReflectionGuidancePayload):
-            payload = ReflectionGuidancePayload.model_validate(payload)
-        return payload, ReflectionGuidance.GenerationSources.GEMINI
-
-    if not settings.OPENAI_API_KEY:
-        raise ValueError("OPENAI_API_KEY is not configured.")
-    # This is where the OpenAI API call for personalised reflection guidance happens.
-    response = _openai_client().responses.parse(
-        model=settings.OPENAI_MODEL,
-        input=[
-            {"role": "system", "content": system_text},
-            {"role": "user", "content": context},
-        ],
-        text_format=ReflectionGuidancePayload,
-    )
-    payload = getattr(response, "output_parsed", None)
-    if not payload:
-        raise ValueError("Structured reflection guidance could not be parsed.")
-    return payload, ReflectionGuidance.GenerationSources.OPENAI
-
-
-def generate_reflection_guidance(session, feedback=None) -> ReflectionGuidance:
-    existing = getattr(session, "reflection_guidance", None)
-    if existing:
-        return existing
-
-    feedback = feedback or generate_feedback(session)
-    prompt = get_prompt_for_type(
-        'REFLECTION',
-        scenario=session.scenario,
-    )
-    fallback = _reflection_fallback_payload(session, feedback)
-    try:
-        payload, generation_source = _live_reflection_guidance_payload(
-            session,
-            feedback,
-            prompt,
-        )
-        payload = _validated_reflection_guidance(payload, fallback)
-    except Exception:
-        logger.exception(
-            "Falling back to fixed reflection guidance for session %s.",
-            session.id,
-        )
-        payload = fallback
-        generation_source = ReflectionGuidance.GenerationSources.PLACEHOLDER
-
-    return ReflectionGuidance.objects.create(
-        session=session,
-        notice_prompt=payload.notice_prompt,
-        action_prompt=payload.action_prompt,
-        generation_source=generation_source,
-        framework_version=CMCV_FRAMEWORK_VERSION,
-    )
+    from training.services.assessment import saved_review
+    return saved_review(session)

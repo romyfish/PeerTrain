@@ -599,7 +599,7 @@ class GEvalPreviewTests(TestCase):
         )
 
     @override_settings(BOUNDARY_JUDGE_ENABLED=True)
-    def test_chat_turn_triggers_one_reliable_judge_workflow(self):
+    def test_chat_turn_triggers_one_mode_independent_assessment(self):
         def fake_help_seeker_reply(session, _content):
             return Message.objects.create(
                 session=session,
@@ -612,7 +612,7 @@ class GEvalPreviewTests(TestCase):
                 "training.views.generate_ai_reply",
                 side_effect=fake_help_seeker_reply,
             ),
-            patch("training.views.ensure_reliable_geval_run") as judge,
+            patch("training.views.assess_turn") as judge,
         ):
             result = _process_chat_turn(
                 self.session,
@@ -622,7 +622,4 @@ class GEvalPreviewTests(TestCase):
 
         self.assertTrue(result["ok"])
         judge.assert_called_once()
-        self.assertEqual(
-            judge.call_args.kwargs["purpose"],
-            BoundaryEvaluationRun.Purposes.LIVE,
-        )
+        self.assertEqual(judge.call_args.args[1], result["user_message"])

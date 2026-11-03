@@ -1,73 +1,26 @@
 <div class="peertrain-boundary-coach-live" data-boundary-coach-live aria-live="polite">
+{% if session.feedback_mode != 'terminal' %}
+  <div class="peertrain-live-overall">
+  <h3 class="peertrain-feedback-section-title">Overall status</h3>
   {% include "trainee/includes/assessment_status.html" with score=boundary_status.score compact=False only %}
-
-  {% if boundary_status.score %}
-    <div class="peertrain-boundary-map-grid">
-      {% for item in boundary_map.dimensions %}
-        <details open class="peertrain-boundary-map-card peertrain-boundary-map-card-{{ item.tone }} {% if item.key == boundary_map.scenario_focus_key %}peertrain-boundary-map-card-focus{% endif %} {% if item.key == boundary_map.watchpoint_key %}peertrain-boundary-map-card-watchpoint{% endif %}">
-          <summary class="peertrain-boundary-map-row">
-            <span class="peertrain-boundary-map-row-copy">
-              <strong>{{ item.name }}</strong>
-              <span>{{ item.label }}</span>
-            </span>
-            <span class="peertrain-boundary-map-row-meta">
-              {% if item.key == boundary_map.scenario_focus_key %}<span class="peertrain-boundary-map-tag peertrain-boundary-map-tag-focus">Focus</span>{% endif %}
-              {% if item.key == boundary_map.watchpoint_key %}<span class="peertrain-boundary-map-tag peertrain-boundary-map-tag-watch">Needs attention</span>{% endif %}
-              <span class="peertrain-boundary-details-label">Details</span>
-              <i class="bi bi-chevron-down" aria-hidden="true"></i>
-            </span>
-          </summary>
-          <div class="peertrain-boundary-map-details">
-            <p class="peertrain-boundary-map-summary">{{ item.summary }}</p>
-            {% if item.observed %}
-              <div class="peertrain-boundary-turn-read">
-                <span>Expected move</span>
-                <strong>{{ item.expected_move_label }}</strong>
-                <span class="peertrain-boundary-turn-outcome peertrain-boundary-turn-outcome-{{ item.outcome }}">
-                  {{ item.outcome_label }}
-                </span>
-              </div>
-              {% if item.evidence_quotes %}
-                <div class="peertrain-boundary-reply-evidence">
-                  <span>Evidence</span>
-                  <q>{{ item.evidence_quotes.0 }}</q>
-                </div>
-              {% endif %}
-              {% if item.major_concerns or item.critical_breaches %}
-                <div class="peertrain-boundary-evidence-alert {% if item.critical_breaches %}is-critical{% endif %}">
-                  <strong>Boundary concern detected</strong>
-                  <span>
-                    {% if item.critical_breaches %}
-                      {{ item.critical_breaches.0 }}
-                    {% else %}
-                      {{ item.major_concerns.0 }}
-                    {% endif %}
-                  </span>
-                </div>
-              {% endif %}
-            {% endif %}
-            {% if item.process_steps %}
-              <div class="peertrain-boundary-process">
-                <strong>Progress</strong>
-                <ul class="peertrain-boundary-process-list">
-                  {% for step in item.process_steps %}
-                    <li class="peertrain-boundary-process-step peertrain-boundary-process-step-{{ step.status }}">
-                      <span>{{ step.label }}</span>
-                      <strong>
-                        {% if step.status == "met" %}Met
-                        {% elif step.status == "partly_met" %}Partly met
-                        {% elif step.status == "missed" %}Missed
-                        {% elif step.status == "concern" %}Boundary concern
-                        {% else %}Not reached yet{% endif %}
-                      </strong>
-                    </li>
-                  {% endfor %}
-                </ul>
-              </div>
-            {% endif %}
-          </div>
-        </details>
-      {% endfor %}
-    </div>
-  {% endif %}
+  </div>
+  {% if has_turn_feedback %}<h3 class="peertrain-feedback-section-title peertrain-reply-feedback-title">Reply feedback</h3>{% endif %}
+  <div class="peertrain-feedback-history">
+  {% for assessment in turn_assessments %}
+    {% if assessment.feedback_text %}
+    <details class="peertrain-live-turn" data-turn-feedback="{{ assessment.trainee_message_id }}" {% if forloop.last %}open{% endif %}>
+      <summary><span>Reply {{ forloop.counter }}</span>{% if assessment.record.boundary_relevant %}<span class="peertrain-boundary-tip-label">Boundary tips</span>{% endif %}</summary>
+      <p class="peertrain-turn-feedback">{{ assessment.feedback_text }}</p>
+      {% if assessment.record.boundary_relevant and assessment.record.alternative_reply %}
+      <aside class="peertrain-live-alternative">
+        <strong>An alternative reply to consider</strong>
+        <p><q><em>{{ assessment.record.alternative_reply }}</em></q></p>
+        {% if assessment.record.alternative_reason %}<p>{{ assessment.record.alternative_reason }}</p>{% endif %}
+      </aside>
+      {% endif %}
+    </details>
+    {% endif %}
+  {% endfor %}
+  </div>
+{% endif %}
 </div>

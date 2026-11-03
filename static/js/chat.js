@@ -40,8 +40,10 @@
   let needsOpening = app.dataset.needsOpening === "true";
   let requestPending = false;
   let generatedDraft = null;
+  let pendingSend = null;
   // Start expanded on every visit; retain manual toggles only within this page.
-  let boundaryCoachCollapsed = false;
+  let feedbackMode = app.dataset.feedbackMode;
+  let boundaryCoachCollapsed = feedbackMode === "terminal";
 
   const safeStorageGet = (storage, key) => {
     try {
@@ -212,6 +214,14 @@
     if (currentLiveContent && html) {
       currentLiveContent.insertAdjacentHTML("beforebegin", html);
       currentLiveContent.remove();
+      const latest = document.querySelector('[data-turn-feedback][open]');
+      if (latest && boundaryCoach && !boundaryCoach.classList.contains('is-collapsed')) {
+        const scroller = desktopBoundaryCoach.matches ? boundaryCoach : boundaryCoachPanel;
+        const headingHeight = boundaryCoach.querySelector('.peertrain-boundary-coach-header')?.getBoundingClientRect().height || 0;
+        const statusHeight = boundaryCoach.querySelector('.peertrain-live-overall')?.getBoundingClientRect().height || 0;
+        const offset = latest.getBoundingClientRect().top - scroller.getBoundingClientRect().top - headingHeight - statusHeight - 16;
+        scroller.scrollTop += offset;
+      }
     }
     updateBoundaryStatus(boundaryScore);
 
@@ -225,7 +235,9 @@
   };
 
   const setDesktopBoundaryCoachCollapsed = (collapsed, { moveFocus = false } = {}) => {
-    if (!boundaryCoach || !boundaryCoachLayout || !desktopBoundaryCoach.matches) return;
+    if (!boundaryCoach || !boundaryCoachLayout) return;
+    if (feedbackMode === "terminal") collapsed = true;
+    if (feedbackMode === "concurrent") collapsed = false;
 
     boundaryCoach.classList.toggle("is-collapsed", collapsed);
     boundaryCoachLayout.classList.toggle("is-coach-collapsed", collapsed);
@@ -255,20 +267,13 @@
 
   const syncBoundaryCoachForViewport = () => {
     if (!boundaryCoach || !boundaryCoachLayout) return;
-    if (desktopBoundaryCoach.matches) {
-      const mobileOffcanvas = window.bootstrap?.Offcanvas?.getInstance(boundaryCoach);
-      if (boundaryCoach.classList.contains("show")) mobileOffcanvas?.hide();
-      boundaryCoachMobileTrigger?.setAttribute("aria-expanded", "false");
-      setDesktopBoundaryCoachCollapsed(boundaryCoachCollapsed);
-      return;
-    }
-
-    boundaryCoach.classList.remove("is-collapsed");
-    boundaryCoachLayout.classList.remove("is-coach-collapsed");
-    boundaryCoachPanel?.removeAttribute("inert");
-    boundaryCoachPanel?.removeAttribute("aria-hidden");
-    boundaryCoachRail?.setAttribute("aria-hidden", "true");
-    refreshBoundaryCoachUnread();
+    boundaryCoachMobileTrigger?.removeAttribute("data-bs-toggle");
+    boundaryCoachMobileTrigger?.removeAttribute("data-bs-target");
+    boundaryCoachToggles.forEach(toggle => { toggle.disabled = feedbackMode !== "combined"; });
+    if (boundaryCoachMobileTrigger) boundaryCoachMobileTrigger.disabled = feedbackMode !== "combined";
+    boundaryCoach.querySelectorAll('[data-bs-dismiss="offcanvas"]').forEach(toggle => { toggle.hidden = true; });
+    setDesktopBoundaryCoachCollapsed(boundaryCoachCollapsed);
+    app.dataset.feedbackMode = feedbackMode;
   };
 
   const chatRequestError = (message, code = "request_failed", status = 0) => {
@@ -361,12 +366,19 @@
     const formData = new FormData(chatForm);
     formData.set("action", action);
     Object.entries(fields).forEach(([key, value]) => formData.set(key, value));
+    if (action === "send") {
+      if (!pendingSend || pendingSend.content !== fields.content) {
+        pendingSend = { content: fields.content, requestId: crypto.randomUUID() };
+      }
+      formData.set("request_id", pendingSend.requestId);
+    }
     return formData;
   };
 
   const joinedNotices = (...notices) => notices.filter(Boolean).join(" ");
 
   const applySuccessfulTurn = (payload, pendingUser, pendingAi, notice = "") => {
+    pendingSend = null;
     replacePendingWithHtml(pendingUser, payload.user_message_html);
     replacePendingWithHtml(pendingAi, payload.ai_message_html);
     updateTurnCount(payload.user_turns);
@@ -566,6 +578,9 @@
     autoResizeComposer();
   }
 
+  boundaryCoachMobileTrigger?.addEventListener("click", () => {
+    setDesktopBoundaryCoachCollapsed(!boundaryCoachCollapsed);
+  });
   retryOpeningButton?.addEventListener("click", startRoleplay);
 
   jumpToLatestButton?.addEventListener("click", () => {
@@ -648,8 +663,13 @@
         button.disabled = true;
         try {
           const data = createActionData("select_persona");
+          data.set("live_feedback", document.getElementById("live-feedback")?.checked ? "on" : "off");
           data.set("persona", document.getElementById("student-mode").checked ? "student" : "pso");
           const character = await requestChatJson(data);
+          feedbackMode = character.feedback_mode;
+          boundaryCoachCollapsed = feedbackMode === "terminal";
+          syncBoundaryCoachForViewport();
+          updateBoundaryCoach(character.boundary_coach_html, 0);
           pendingTemplate.content.querySelector(".peertrain-chat-speaker").textContent = `${character.name} (AI-simulated)`;
           pendingTemplate.content.querySelector(".peertrain-ai-avatar").src = character.portrait;
           modal.hide();

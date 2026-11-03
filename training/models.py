@@ -71,6 +71,10 @@ class TrainingSession(models.Model):
             return None
         return session_persona_for(self.scenario.boundary_type, self.persona)
 
+    feedback_mode = models.CharField(
+        max_length=12, default="terminal",
+        choices=[("terminal", "Terminal"), ("concurrent", "Concurrent"), ("combined", "Combined")],
+    )
     ended_early = models.BooleanField(default=False)
     rubric_version = models.CharField(max_length=30, default="BOUNDARY-SKILLS-2.0")
 
@@ -101,6 +105,7 @@ class Message(models.Model):
     )
     sender_type = models.CharField(max_length=10, choices=SenderTypes.choices)
     content = models.TextField()
+    request_id = models.UUIDField(null=True, blank=True, unique=True)
     response_source = models.CharField(
         max_length=20,
         choices=ResponseSources.choices,
@@ -134,6 +139,7 @@ class Feedback(models.Model):
         validators=[MinValueValidator(1), MaxValueValidator(5)],
     )
     strengths = models.TextField()
+    overview = models.TextField(blank=True, default='')
     improvements = models.TextField()
     generation_source = models.CharField(
         max_length=20,
@@ -566,3 +572,36 @@ class PlatformSetting(models.Model):
 
     def __str__(self):
         return "Platform settings"
+
+
+class TurnAssessment(models.Model):
+    trainee_message = models.OneToOneField(Message, on_delete=models.CASCADE, related_name="assessment")
+    overall_status_level = models.PositiveSmallIntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(5)])
+    feedback_type = models.CharField(max_length=20, choices=[("affirmation", "Affirmation"), ("reflective_prompt", "Reflective prompt"), ("none", "None")])
+    feedback_text = models.TextField(blank=True, default="")
+    roleplay_cue = models.TextField(blank=True, default="")
+    record = models.JSONField(default=dict)
+    succeeded = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["trainee_message_id"]
+
+
+class RoleplaySafetyCheck(models.Model):
+    session = models.ForeignKey(TrainingSession, on_delete=models.CASCADE, related_name="safety_checks")
+    verdict = models.CharField(max_length=10)
+    reason_codes = models.JSONField(default=list)
+    # Do not retain rejected candidate text in the accepted transcript.
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class ReflectionMessage(models.Model):
+    session = models.ForeignKey(TrainingSession, on_delete=models.CASCADE, related_name="reflection_messages")
+    sender_type = models.CharField(max_length=10, choices=Message.SenderTypes.choices)
+    content = models.TextField()
+    request_id = models.UUIDField(null=True, blank=True, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]

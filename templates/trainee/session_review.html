@@ -1,165 +1,89 @@
 {% extends "base_app.html" %}
 {% load static assessment_ui %}
-
+{% block app_container_class %}container-fluid pt-3 pb-4 px-4 px-xl-5{% endblock %}
 {% block extra_head %}
-  <link href="{% static 'css/learning.css' %}?v=20261027-2" rel="stylesheet">
-  <link href="{% static 'css/assessment.css' %}?v=20261020-2" rel="stylesheet">
+<link href="{% static 'css/chat.css' %}?v=20261103-3" rel="stylesheet">
+<link href="{% static 'css/assessment.css' %}" rel="stylesheet">
+<link href="{% static 'css/review.css' %}?v=20261103-2" rel="stylesheet">
 {% endblock %}
-
 {% block content %}
-<div class="peertrain-learning-page">
-  <header class="peertrain-review-header mb-4">
-    <div>
-      <h1 class="mb-0">{{ session.scenario.display_title }}</h1>
+<div class="peertrain-review {{ scenario_meta.theme_class }}">
+  <header class="mb-4">
+    <div class="review-title-row">
+      <h1>You've completed the {{ session.scenario.boundary_type|title }} scenario!</h1>
+      <a href="{% url 'history' %}">All sessions <i class="bi bi-arrow-right" aria-hidden="true"></i></a>
     </div>
-    <div class="peertrain-review-overall">
-      <span>Overall feedback</span>
-      {% assessment_status feedback.overall_score overall=True as overall_status %}
-      <strong class="peertrain-assessment-title peertrain-assessment-{{ overall_status.tone }}">{{ overall_status.label }}</strong>
-      {# 供应商来源保留在数据库中用于审计，不向学员展示。 #}
-    </div>
+    <p>Take a moment to review your conversation and reflect on your experience. You could explore the feedback and write down your thoughts.</p>
   </header>
-
-  {% if session.ended_early %}
-    <div class="alert alert-warning rounded-4">This session ended early, so some dimensions may not have enough evidence.</div>
-  {% endif %}
-
-  <div class="accordion peertrain-review-accordion" id="session-review-accordion">
-    <section class="accordion-item">
-      <h2 class="accordion-header">
-        <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#feedback-panel">
-          Feedback
-        </button>
-      </h2>
-      <div id="feedback-panel" class="accordion-collapse collapse show">
-        <div class="accordion-body">
-          <div class="row g-3 mb-4">
-            {% for card in score_cards %}
-              <div class="col-12 col-lg-4">
-                <article class="peertrain-boundary-score-card {{ card.tone }}{% if card.score.review_required %} needs-review{% endif %}">
-                  <div class="peertrain-score-icon"><i class="bi {{ card.icon }}"></i></div>
-                  <div>
-                    <span>{{ card.label }}</span>
-                    {% if card.score and card.score.review_required %}
-                      <strong>Needs review</strong>
-                    {% elif card.score and card.score.observed %}
-                      <strong>Score {{ card.score.score }} / 5</strong>
-                    {% else %}
-                      <strong>Not observed</strong>
-                    {% endif %}
-                  </div>
-                  {% if card.score %}
-                    <p>{{ card.score.rationale|default:"The conversation did not provide enough evidence for this dimension." }}</p>
-                    {% if card.assessment and card.assessment.observed %}
-                      <dl class="peertrain-score-process">
-                        <div><dt>Moves met</dt><dd>{{ card.assessment.completed_count }}/3</dd></div>
-                        {% if card.assessment.not_reached_labels %}
-                          <div><dt>Not reached</dt><dd>{{ card.assessment.not_reached_labels|join:", " }}</dd></div>
-                        {% endif %}
-                        {% if card.assessment.unresolved_missed_labels %}
-                          <div><dt>Still missed</dt><dd>{{ card.assessment.unresolved_missed_labels|join:", " }}</dd></div>
-                        {% endif %}
-                        {% if card.assessment.repaired_missed_labels %}
-                          <div><dt>Repaired</dt><dd>{{ card.assessment.repaired_missed_labels|join:", " }}</dd></div>
-                        {% endif %}
-                        {% if card.assessment.repaired_major_concern %}
-                          <div><dt>Score cap</dt><dd>A major boundary concern was repaired; the score is capped at 3.</dd></div>
-                        {% endif %}
-                        {% if card.assessment.critical_breach %}
-                          <div><dt>Critical breach</dt><dd>A potentially harmful boundary response sets the score to 1.</dd></div>
-                        {% endif %}
-                        <div><dt>Score rule</dt><dd>{{ card.assessment.rationale }}</dd></div>
-                      </dl>
-                      <details class="peertrain-session-evidence">
-                        <summary>
-                          Conversation evidence
-                          <span>{{ card.assessment.events|length }} assessed moment{{ card.assessment.events|length|pluralize }}</span>
-                        </summary>
-                        <ol>
-                          {% for event in card.assessment.events %}
-                            <li>
-                              <div class="peertrain-session-evidence-heading">
-                                <strong>Turn {{ event.turn_number }}</strong>
-                                <span>{{ event.move_label }}</span>
-                                <span class="peertrain-session-evidence-outcome {{ event.outcome }}">
-                                  {{ event.outcome_label }}
-                                </span>
-                              </div>
-                              {% for quote in event.evidence_quotes %}
-                                <blockquote>{{ quote }}</blockquote>
-                              {% endfor %}
-                              <p>{{ event.rationale }}</p>
-                            </li>
-                          {% endfor %}
-                        </ol>
-                      </details>
-                    {% endif %}
-                  {% endif %}
-                </article>
-              </div>
-            {% endfor %}
-          </div>
-
-          <div class="row g-3 mb-4">
-            <div class="col-lg-6">
-              <article class="peertrain-feedback-note worked">
-                <h3><i class="bi bi-check2-circle"></i> What worked</h3>
-                <ul>{% for item in feedback.strength_list %}<li>{{ item }}</li>{% empty %}<li>No boundary behaviour was sufficiently evidenced.</li>{% endfor %}</ul>
-              </article>
-            </div>
-            <div class="col-lg-6">
-              <article class="peertrain-feedback-note next">
-                <h3><i class="bi bi-arrow-up-right-circle"></i> Next boundary moves</h3>
-                <ul>{% for item in feedback.improvement_list %}<li>{{ item }}</li>{% empty %}<li>Continue practising explicit, collaborative boundaries.</li>{% endfor %}</ul>
-              </article>
-            </div>
-          </div>
-
-          <div class="peertrain-review-items">
-            <h3>Boundary notebook</h3>
-            {% for item in feedback.review_items.all %}
-              <article class="peertrain-review-item">
-                <span class="peertrain-boundary-key">{{ item.get_boundary_key_display }}</span>
-                <h4>{{ item.issue_label }}</h4>
-                <p><strong>Your reply:</strong> {{ item.message_excerpt }}</p>
-                <p><strong>Why this matters:</strong> {{ item.why_it_matters }}</p>
-                <div class="peertrain-better-reply"><strong>A better reply</strong>{{ item.better_reply }}</div>
-              </article>
-            {% empty %}
-              <div class="peertrain-empty-state compact">No boundary-specific review items were identified.</div>
-            {% endfor %}
-          </div>
+  <div class="review-columns">
+    <div class="review-feedback" role="group" aria-label="Feedback">
+      <section class="review-overview" aria-labelledby="overview-heading">
+        <div class="review-overview-heading"><h3 id="overview-heading">Session overview</h3>
+        {% assessment_status feedback.overall_score overall=True as overall_status %}
+        <span class="review-overall-status peertrain-assessment-{{ overall_status.tone }}">
+          <img class="peertrain-assessment-icon" src="{% static overall_status.icon_asset %}" width="28" height="28" alt="" aria-hidden="true">
+          <strong class="peertrain-assessment-title peertrain-assessment-{{ overall_status.tone }}">{{ overall_status.label }}</strong>
+        </span>
         </div>
-      </div>
-    </section>
-
-    <section class="accordion-item">
-      <h2 class="accordion-header">
-        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#reflection-panel">
-          Reflection
-        </button>
-      </h2>
-      <div id="reflection-panel" class="accordion-collapse collapse">
-        <div class="accordion-body">
-          <form method="post" class="peertrain-reflection-form">
-            {% csrf_token %}
-            <div class="mb-4">
-              <label for="{{ form.reflection_text.id_for_label }}" class="form-label">{{ form.reflection_text.label }}</label>
-              <p class="peertrain-reflection-guidance">{{ reflection_guidance.notice_prompt }}</p>
-              {{ form.reflection_text }}
-              {% for error in form.reflection_text.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
-            </div>
-            <div class="mb-4">
-              <label for="{{ form.action_plan.id_for_label }}" class="form-label">{{ form.action_plan.label }}</label>
-              <p class="peertrain-reflection-guidance">{{ reflection_guidance.action_prompt }}</p>
-              {{ form.action_plan }}
-              {% for error in form.action_plan.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
-            </div>
-            <button class="btn btn-primary rounded-4 px-4" type="submit">Save to history</button>
-          </form>
+        <div class="review-overview-content">
+        {% if feedback.overview %}<p class="review-overall-copy">{{ feedback.overview|boundary_highlights }}</p>{% endif %}
+        <section class="review-summary-card review-summary-strengths"><h4><i class="bi bi-check-circle" aria-hidden="true"></i> What worked</h4>
+          <ul>{% for strength in feedback.strength_list %}<li>{{ strength|boundary_highlights }}</li>{% endfor %}</ul>
+        </section>
+        <section class="review-summary-card review-summary-considerations"><h4><i class="bi bi-arrow-right-circle" aria-hidden="true"></i> Areas for consideration</h4>
+          <ul>{% for consideration in feedback.improvement_list %}<li>{{ consideration|boundary_highlights }}</li>{% endfor %}</ul>
+        </section>
         </div>
+      </section>
+      <section class="review-conversation" aria-labelledby="conversation-heading">
+      <h3 id="conversation-heading">Conversation review</h3>
+      <div class="review-transcript" tabindex="0" aria-label="Conversation review">
+        {% for turn in timeline %}
+          <div id="turn-{{ turn.message.id }}">
+            {% include "trainee/includes/chat_message.html" with message=turn.message %}
+          </div>
+          {% if inline_feedback and turn.message.sender_type == 'USER' %}
+            {% if turn.assessment.feedback_type != 'none' and turn.assessment.feedback_text %}
+            <aside class="review-turn-feedback"><strong>{% if turn.assessment.record.boundary_relevant %}Boundary tips{% else %}Feedback{% endif %}</strong><p>{{ turn.assessment.feedback_text|boundary_highlights }}</p></aside>
+            {% endif %}
+            {% for example in turn.examples %}
+              {% include "trainee/includes/review_alternative.html" %}
+            {% endfor %}
+          {% endif %}
+        {% endfor %}
       </div>
-    </section>
+      </section>
+    </div>
+    <div class="review-reflection" role="group" aria-label="Reflection">
+      <section class="review-ai" aria-labelledby="reflect-ai-heading">
+        <h3 id="reflect-ai-heading">Reflect with AI</h3>
+        <div class="reflection-chat" data-reflection-log role="log" aria-live="polite" tabindex="0">
+          {% for message in reflection_messages %}
+          <article class="peertrain-chat-message peertrain-chat-message-{% if message.sender_type == 'USER' %}user{% else %}ai{% endif %}">
+            {% if message.sender_type == 'AI' %}<img src="{% static 'images/bot-icon.png' %}" class="reflection-avatar" alt="Reflection AI">{% endif %}
+            <div class="peertrain-chat-message-bubble">{{ message.content|linebreaksbr }}</div>
+          </article>
+          {% endfor %}
+        </div>
+        <form method="post" action="{% url 'session_review' session.id %}" data-reflection-form>
+          {% csrf_token %}<input type="hidden" name="action" value="reflect">
+          <input type="hidden" name="request_id" value="{{ reflection_request_id }}">
+          <label class="visually-hidden" for="reflection-input">Ask or share your thoughts…</label>
+          <div class="review-input-row"><textarea id="reflection-input" name="content" rows="1" maxlength="12000" required placeholder="Ask or share your thoughts…"></textarea><button type="submit" class="btn peertrain-btn-primary review-reflection-send" aria-label="Send reflection"><i class="bi bi-send" aria-hidden="true"></i></button></div>
+          <p data-reflection-error role="alert"></p>
+        </form>
+      </section>
+      <section class="review-notes" aria-labelledby="notes-heading">
+        <h3 id="notes-heading">My notes</h3>
+        <form method="post" action="{% url 'session_review' session.id %}" data-notes-form>
+          {% csrf_token %}<input type="hidden" name="action" value="save_notes">
+          <label class="visually-hidden" for="review-notes">My notes</label>
+          <textarea id="review-notes" name="reflection_text" placeholder="Write down any thoughts, observations, or things you'd like to remember for future practice…">{{ reflection.reflection_text }}</textarea>
+          <div class="review-notes-actions"><button type="submit" class="btn peertrain-btn-primary">Save</button> <span role="status" data-notes-status></span></div>
+        </form>
+      </section>
+    </div>
   </div>
 </div>
 {% endblock %}
+{% block extra_scripts %}<script src="{% static 'js/review.js' %}?v=20261103-1"></script>{% endblock %}
