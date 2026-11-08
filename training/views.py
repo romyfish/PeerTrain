@@ -5,76 +5,41 @@ from django.templatetags.static import static
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Avg, Count, F, Max, Q
+from django.db.models import Count, Q
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
-from django.views.decorators.http import require_safe
 
 from accounts.decorators import role_required
-from training.content import (
-    SCENARIO_LIBRARY,
-    boundary_framework_for,
-    scenario_map_by_boundary,
-)
-from training.prompts import (
-    DEFAULT_PROMPT_CONTEXTS, DEFAULT_PROMPT_METHODS, ROLEPLAY_SCENARIOS,
-    ROLEPLAY_OPENING_INSTRUCTIONS, ROLEPLAY_CONTINUATION_INSTRUCTIONS,
-    scenario_prompt_context_for, persona_prompt_for,
-)
-from training.forms import (
-    BoundaryTurnReviewForm,
-    ChatMessageForm,
-    PlatformSettingForm,
-)
-from training.models import (
-    BoundaryEvaluationRun,
-    BoundaryTurnEvaluation,
-    Feedback,
-    FeedbackReviewItem,
-    FeedbackScore,
-    Message,
-    PlatformSetting,
-    Reflection,
-    Scenario,
-    TrainingSession,
-    TurnAssessment,
-)
-from training.services.ai import (
-    build_boundary_status_indicator,
-    generate_ai_opening,
-    generate_ai_reply,
-    generate_demo_trainee_reply,
-    generate_feedback,
-)
+from training.content import boundary_framework_for, scenario_map_by_boundary
+from training.prompts import ROLEPLAY_SCENARIOS
+from training.forms import ChatMessageForm
+from training.models import FeedbackReviewItem, Message, PlatformSetting, Reflection, Scenario, TrainingSession, TurnAssessment
+from training.services.ai import (build_boundary_status_indicator, generate_ai_opening,
+    generate_ai_reply, generate_demo_trainee_reply, generate_feedback)
 from training.services.assessment import assess_turn, ensure_reflection_opening, reflect, lock_session
-from training.services.boundary_scoring import RUBRIC_VERSION
-from training.services.review_queue import (
-    apply_human_review_resolution,
-    grouped_review_queue,
-)
+from training.services.suspension import PracticeFailure, pause, PAUSE_MESSAGE, PAUSE_TITLE
 
 logger = logging.getLogger(__name__)
 from training.services.progress import (
-    admin_analytics_snapshot,
     progress_snapshot,
     recalculate_user_progress,
 )
 
 
+def _test_reply_tools(user):
+    return settings.DEBUG and user.is_test_account
+
+
 def _sidebar_items(user=None, is_admin=False):
     if is_admin:
         return [
-            {"label": "Dashboard", "url": reverse("admin_dashboard"), "name": "admin_dashboard", "icon": "bi-grid-1x2-fill"},
             {"label": "Users", "url": reverse("admin_users"), "name": "admin_users", "icon": "bi-people-fill"},
-            {"label": "Prompts", "url": reverse("admin_prompts"), "name": "admin_prompts", "icon": "bi-chat-left-text-fill"},
-            {"label": "Score reviews", "url": reverse("admin_scoring_reviews"), "name": "admin_scoring_reviews", "icon": "bi-clipboard2-check-fill"},
-            {"label": "Analytics", "url": reverse("admin_analytics"), "name": "admin_analytics", "icon": "bi-graph-up-arrow"},
-            {"label": "Settings", "url": reverse("admin_settings"), "name": "admin_settings", "icon": "bi-sliders2"},
+            {"label": "Practice records", "url": reverse("admin_records"), "name": "admin_records", "icon": "bi-journal-text"},
+            {"label": "Interaction logs", "url": reverse("admin_logs"), "name": "admin_logs", "icon": "bi-clock-history"},
         ]
 
     return [
@@ -97,75 +62,66 @@ def _scenario_meta_map():
     return scenario_map_by_boundary()
 
 
-@transaction.atomic
-def _process_chat_turn(
-    session,
-    content,
-    max_exchanges,
-    *,
-    user_response_source=Message.ResponseSources.USER_INPUT,
-    request_id=None,
-):
-    lock_session(session)
+def _paused_result():
+    return {"ok": False, "status": 409, "code": "session_paused", "error": PAUSE_TITLE + "\n" + PAUSE_MESSAGE}
+
+
+def _complete_pending_turn(session, user_message):
+    token = session.processing_token
+    try:
+        assess_turn(session, user_message)
+        session.refresh_from_db()
+        if session.processing_token != token or session.status != 'IN_PROGRESS':
+            return _paused_result()
+        reply = generate_ai_reply(session, user_message.content)
+    except Exception as exc:
+        session.processing_token = token
+        pause(session, exc.category if isinstance(exc, PracticeFailure) else 'TURN_PROCESSING_FAILED')
+        return _paused_result()
+    TrainingSession.objects.filter(pk=session.pk, processing_token=token).update(processing=False)
     session.refresh_from_db()
+    return {"ok": True, "user_message": user_message, "ai_message": reply, "notice": ""}
+
+
+def _process_chat_turn(session, content, max_exchanges, *, user_response_source=Message.ResponseSources.USER_INPUT, request_id=None):
     if request_id:
         try:
             request_id = uuid.UUID(str(request_id))
         except ValueError:
             return {"ok": False, "status": 400, "code": "invalid_request", "error": "Invalid message request."}
-        previous = session.messages.filter(request_id=request_id, sender_type='USER').first()
-        if previous:
-            reply = session.messages.filter(sender_type='AI', pk__gt=previous.pk).first()
-            if reply:
-                return {"ok": True, "user_message": previous, "ai_message": reply, "notice": ""}
-    if session.status != TrainingSession.Statuses.IN_PROGRESS:
-        return {"ok": False, "status": 409, "code": "session_complete", "error": "This session has already been completed."}
-    cleaned_content = (content or "").strip()
+    cleaned_content = (content or '').strip()
     if not cleaned_content:
-        return {
-            "ok": False,
-            "status": 400,
-            "code": "empty_message",
-            "error": "Reply could not be empty.",
-        }
-
-    current_user_turns = session.messages.filter(
-        sender_type=Message.SenderTypes.USER,
-    ).count()
-    if current_user_turns >= max_exchanges:
-        return {
-            "ok": False,
-            "status": 409,
-            "code": "turn_limit",
-            "error": (
-                "Maximum exchanges reached for this prototype session. "
-                "Finish the session to review your feedback."
-            ),
-        }
-
-    user_message = Message.objects.create(
-        session=session,
-        sender_type=Message.SenderTypes.USER,
-        content=cleaned_content,
-        response_source=user_response_source,
-        request_id=request_id,
-    )
-    assess_turn(session, user_message)
-    ai_message = generate_ai_reply(session, cleaned_content)
-    notice = ""
-    if getattr(ai_message, "used_fallback", False):
-        notice = getattr(
-            ai_message,
-            "fallback_notice",
-            "This turn used a placeholder help-seeker reply because the LLM request failed.",
-        )
-
-    return {
-        "ok": True,
-        "user_message": user_message,
-        "ai_message": ai_message,
-        "notice": notice,
-    }
+        return {"ok": False, "status": 400, "code": "empty_message", "error": "Reply could not be empty."}
+    # Commit the accepted message and claim before any external requests.
+    with transaction.atomic():
+        lock_session(session)
+        session.refresh_from_db()
+        if session.status == 'PAUSED':
+            return _paused_result()
+        if session.status != 'IN_PROGRESS':
+            return {"ok": False, "status": 409, "code": "session_complete", "error": "This session has ended."}
+        if request_id:
+            if Message.objects.filter(request_id=request_id).exclude(session=session).exists():
+                return {'ok': False, 'status': 400, 'code': 'invalid_request', 'error': 'Invalid message request.'}
+            previous = session.messages.filter(request_id=request_id, sender_type='USER').first()
+            if previous:
+                reply = session.messages.filter(sender_type='AI', pk__gt=previous.pk).first()
+                if reply:
+                    return {"ok": True, "user_message": previous, "ai_message": reply, "notice": ""}
+                return {"ok": False, "status": 409, "code": "turn_pending", "error": "This turn is pending. Please contact the researcher."}
+        if session.processing:
+            return {"ok": False, "status": 409, "code": "turn_pending", "error": "A request is already being processed."}
+        latest = session.messages.last()
+        if latest is None or latest.sender_type != 'AI':
+            return {"ok": False, "status": 409, "code": "roleplay_not_started", "error": "Wait for the help-seeker before replying."}
+        if session.messages.filter(sender_type='USER').count() >= max_exchanges:
+            return {"ok": False, "status": 409, "code": "turn_limit", "error": "Maximum exchanges reached. Finish the session to review your feedback."}
+        user_message = Message.objects.create(session=session, sender_type='USER', content=cleaned_content,
+            response_source=user_response_source, request_id=request_id)
+        session.processing = True
+        session.processing_token = uuid.uuid4()
+        session.save(update_fields=['processing', 'processing_token'])
+    return _complete_pending_turn(session, user_message)
 
 
 def _is_ajax_chat_request(request):
@@ -189,18 +145,21 @@ def _chat_live_state(session, max_exchanges):
         "max_exchanges": max_exchanges,
         "can_send": (
             session.status == TrainingSession.Statuses.IN_PROGRESS
+            and not session.processing
             and user_turns < max_exchanges
         ),
     }
 
 
-def _chat_json_error(message, status, *, code="request_failed", can_send=True):
+def _chat_json_error(message, status, *, code="request_failed", can_send=True, session=None, request=None):
     return JsonResponse(
         {
             "ok": False,
             "code": code,
             "error": message,
             "can_send": can_send,
+            "session_status": 'PAUSED' if code == 'session_paused' else None,
+            "transcript_html": ''.join(render_to_string('trainee/includes/chat_message.html', {'message': m}, request=request) for m in session.messages.all()) if session is not None and code == 'session_paused' else '',
         },
         status=status,
     )
@@ -209,12 +168,6 @@ def _chat_json_error(message, status, *, code="request_failed", can_send=True):
 def _chat_opening_json_success(request, session, message, max_exchanges):
     state = _chat_live_state(session, max_exchanges)
     notice = ""
-    if getattr(message, "used_fallback", False):
-        notice = getattr(
-            message,
-            "fallback_notice",
-            "This opening used a backup reply because the LLM request failed.",
-        )
     try:
         opening_message_html = render_to_string(
             "trainee/includes/chat_message.html",
@@ -245,7 +198,7 @@ def _chat_prepared_reply_json(reply, *, can_send=True):
             "ok": True,
             "generated_content": reply.content,
             "response_source": reply.response_source,
-            "notice": reply.fallback_notice if reply.used_fallback else "",
+            "notice": "",
             "can_send": can_send,
         }
     )
@@ -377,7 +330,14 @@ def chat_view(request, session_id):
     scenario_meta = _scenario_meta_map().get(session.scenario.boundary_type, {})
 
     if request.method == "POST":
+        session.refresh_from_db()
+        if session.status == 'PAUSED':
+            return _chat_json_error(PAUSE_TITLE + "\n" + PAUSE_MESSAGE, 409, code='session_paused', can_send=False, session=session, request=request)
+        if session.status != 'IN_PROGRESS':
+            return _chat_json_error('This session has ended.', 409, code='session_complete', can_send=False)
         action = request.POST.get("action", "send")
+        if session.processing:
+            return _chat_json_error('A request is already being processed. Please contact the researcher if it remains pending.', 409, code='turn_pending', can_send=False)
         if action == "finish":
             user_turns = session.messages.filter(
                 sender_type=Message.SenderTypes.USER,
@@ -392,18 +352,18 @@ def chat_view(request, session_id):
                     )
                 messages.warning(request, error)
                 return redirect("chat", session_id=session.id)
-            session.status = TrainingSession.Statuses.COMPLETED
-            session.end_time = timezone.now()
-            session.ended_early = user_turns < 4
-            session.rubric_version = RUBRIC_VERSION
-            session.save(
-                update_fields=[
-                    "status",
-                    "end_time",
-                    "ended_early",
-                    "rubric_version",
-                ]
-            )
+            with transaction.atomic():
+                lock_session(session)
+                session.refresh_from_db()
+                if session.status != 'IN_PROGRESS' or session.processing:
+                    return _chat_json_error('This session cannot advance.', 409, can_send=False)
+                latest = session.messages.last()
+                if latest and latest.sender_type == 'USER':
+                    return _chat_json_error('A turn needs researcher attention.', 409, can_send=False)
+                session.status = TrainingSession.Statuses.COMPLETED
+                session.end_time = timezone.now()
+                session.ended_early = user_turns < 4
+                session.save(update_fields=['status', 'end_time', 'ended_early'])
             return redirect("session_review", session_id=session.id)
 
         if action == "select_persona":
@@ -450,19 +410,18 @@ def chat_view(request, session_id):
 
             TrainingSession.objects.filter(pk=session.pk, persona="").update(persona="pso")
             session.refresh_from_db()
+            if not TrainingSession.objects.filter(pk=session.pk, status='IN_PROGRESS', processing=False).update(processing=True, processing_token=uuid.uuid4()):
+                return _chat_json_error('A request is already being processed.', 409, code='turn_pending', can_send=False)
+            session.refresh_from_db()
             try:
                 opening_message = generate_ai_opening(session)
-            except Exception:
-                logger.exception("Could not generate the role-play opening for session %s.", session.id)
-                error = "The AI help-seeker could not start the conversation. Please try again."
+            except Exception as exc:
+                pause(session, exc.category if isinstance(exc, PracticeFailure) else 'OPENING_GENERATION_FAILED')
                 if is_ajax:
-                    return _chat_json_error(
-                        error,
-                        500,
-                        code="opening_failed",
-                    )
-                messages.error(request, error)
-                return redirect("chat", session_id=session.id)
+                    return _chat_json_error(PAUSE_TITLE + "\n" + PAUSE_MESSAGE, 409, code='session_paused', can_send=False, session=session, request=request)
+                return redirect('chat', session_id=session.pk)
+            TrainingSession.objects.filter(pk=session.pk, processing_token=session.processing_token).update(processing=False)
+            session.refresh_from_db()
 
             if is_ajax:
                 return _chat_opening_json_success(
@@ -471,12 +430,10 @@ def chat_view(request, session_id):
                     opening_message,
                     settings_obj.max_exchanges_per_session,
                 )
-            if getattr(opening_message, "fallback_notice", ""):
-                messages.warning(request, opening_message.fallback_notice)
             return redirect("chat", session_id=session.id)
 
         if action == "prepare_auto_reply":
-            if not request.user.is_test_account:
+            if not _test_reply_tools(request.user):
                 return _chat_json_error(
                     "Quick test replies are only available for the Alex Chen demo account.",
                     403,
@@ -515,14 +472,14 @@ def chat_view(request, session_id):
             except Exception:
                 logger.exception("Could not prepare a test reply for session %s.", session.id)
                 return _chat_json_error(
-                    "The test reply could not be generated. Please try again.",
+                    "Development test reply generation failed. Please contact the researcher.",
                     500,
                     code="test_reply_failed",
                 )
             return _chat_prepared_reply_json(prepared_reply)
 
         if action in {"auto_helpful", "auto_unhelpful"}:
-            if not request.user.is_test_account:
+            if not _test_reply_tools(request.user):
                 error = "Quick test replies are only available for the Alex Chen demo account."
                 if is_ajax:
                     return _chat_json_error(error, 403, code="test_reply_forbidden")
@@ -551,7 +508,10 @@ def chat_view(request, session_id):
                 return redirect("chat", session_id=session.id)
 
             quality = "helpful" if action == "auto_helpful" else "unhelpful"
-            auto_reply = generate_demo_trainee_reply(session, quality)
+            try:
+                auto_reply = generate_demo_trainee_reply(session, quality)
+            except Exception:
+                return _chat_json_error('Development test reply generation failed. Please contact the researcher.', 503, code='test_reply_failed')
             result = _process_chat_turn(
                 session,
                 auto_reply.content,
@@ -565,12 +525,12 @@ def chat_view(request, session_id):
                         result["error"],
                         result["status"],
                         code=result.get("code", "request_failed"),
-                        can_send=result["status"] != 409,
+                        can_send=result["status"] != 409, session=session, request=request,
                     )
                 messages.warning(request, result["error"])
                 return redirect("chat", session_id=session.id)
 
-            auto_notice = auto_reply.fallback_notice if auto_reply.used_fallback else ""
+            auto_notice = ""
             if is_ajax:
                 return _chat_json_success(
                     request,
@@ -591,9 +551,8 @@ def chat_view(request, session_id):
             allowed_generated_sources = {
                 Message.ResponseSources.OPENAI,
                 Message.ResponseSources.GEMINI,
-                Message.ResponseSources.PLACEHOLDER,
             }
-            if request.user.is_test_account and generated_source in allowed_generated_sources:
+            if _test_reply_tools(request.user) and generated_source in allowed_generated_sources:
                 user_response_source = generated_source
             result = _process_chat_turn(
                 session,
@@ -608,7 +567,7 @@ def chat_view(request, session_id):
                         result["error"],
                         result["status"],
                         code=result.get("code", "request_failed"),
-                        can_send=result["status"] != 409,
+                        can_send=result["status"] != 409, session=session, request=request,
                     )
                 messages.warning(request, result["error"])
                 return redirect("chat", session_id=session.id)
@@ -627,7 +586,9 @@ def chat_view(request, session_id):
             return _chat_json_error(str(error), 400, code="invalid_message")
 
     live_state = _chat_live_state(session, settings_obj.max_exchanges_per_session)
-    needs_roleplay_opening = not session.messages.exists()
+    if session.status != 'IN_PROGRESS' or session.processing:
+        form.fields['content'].widget.attrs['disabled'] = True
+    needs_roleplay_opening = session.status == 'IN_PROGRESS' and not session.processing and not session.messages.exists()
     context = _app_context(request, "chat", "Role-play Chat")
     context.update(
         {
@@ -635,7 +596,9 @@ def chat_view(request, session_id):
             "chat_messages": session.messages.all(),
             "form": form,
             "scenario_meta": scenario_meta,
-            "show_test_reply_tools": request.user.is_test_account,
+            "show_test_reply_tools": _test_reply_tools(request.user),
+            "practice_pending": session.processing,
+            "practice_paused": session.status == "PAUSED",
             "needs_roleplay_opening": needs_roleplay_opening,
             "needs_persona_selection": needs_roleplay_opening and not session.persona,
             "roleplay_scenario": ROLEPLAY_SCENARIOS[session.scenario.boundary_type],
@@ -681,10 +644,11 @@ def session_review_view(request, session_id):
                 return JsonResponse({"ok": False, "error": "Enter a reflection of up to 12,000 characters."}, status=400)
             try:
                 if not reflect(session, feedback, content, request_id):
-                    return JsonResponse({"ok": False, "error": "Reflection AI is unavailable. Your message is saved; please try again."}, status=503)
+                    return JsonResponse({"ok": False, "code": "reflection_attention", "error": "Reflection AI is unavailable. Your message is saved; please contact the researcher before continuing.",
+                        "messages": list(session.reflection_messages.values('sender_type', 'content'))}, status=503)
             except Exception:
                 logger.warning("Reflection unavailable for session %s", session.pk)
-                return JsonResponse({"ok": False, "error": "Reflection AI is unavailable. Please try again."}, status=503)
+                return JsonResponse({"ok": False, "error": "Reflection AI is unavailable. Please contact the researcher before continuing."}, status=503)
             return JsonResponse({"ok": True, "messages": list(session.reflection_messages.values("sender_type", "content"))})
         if action != "save_notes":
             return JsonResponse({"ok": False, "error": "Unknown review action."}, status=400)
@@ -694,7 +658,7 @@ def session_review_view(request, session_id):
             return JsonResponse({"ok": True, "confirmation": "Saved"})
         messages.success(request, "Saved")
         return redirect("session_review", session_id=session.id)
-    examples = list(feedback.review_items.all())
+    examples = list(feedback.review_items.all()) if feedback else []
     timeline = []
     for message in session.messages.select_related("session__scenario", "assessment"):
         assessment = getattr(message, "assessment", None)
@@ -808,314 +772,7 @@ def progress_view(request):
 @login_required
 @role_required("ADMIN")
 def admin_dashboard_view(request):
-    review_rows = BoundaryTurnEvaluation.objects.exclude(
-        review_scope=BoundaryTurnEvaluation.ReviewScopes.NONE
-    )
-    stats = {
-        "users": request.user.__class__.objects.count(),
-        "trainees": request.user.__class__.objects.filter(role="TRAINEE").count(),
-        "in_progress_sessions": TrainingSession.objects.filter(
-            status=TrainingSession.Statuses.IN_PROGRESS
-        ).count(),
-        "active_prompts": len(DEFAULT_PROMPT_CONTEXTS) * (1 + len(ROLEPLAY_SCENARIOS)),
-        "completed_sessions": TrainingSession.objects.filter(status="COMPLETED").count(),
-        "avg_score": round(
-            Feedback.objects.aggregate(avg=Avg("overall_score"))["avg"] or 0,
-            1,
-        ),
-        "required_score_reviews": review_rows.filter(
-            review_scope=BoundaryTurnEvaluation.ReviewScopes.REQUIRED,
-            review_status=BoundaryTurnEvaluation.ReviewStatuses.PENDING,
-        )
-        .values("run_id", "boundary_key")
-        .distinct()
-        .count(),
-        "sampled_score_reviews": review_rows.filter(
-            review_scope=BoundaryTurnEvaluation.ReviewScopes.QUALITY_SAMPLE,
-            review_status=BoundaryTurnEvaluation.ReviewStatuses.PENDING,
-        )
-        .values("run_id", "boundary_key")
-        .distinct()
-        .count(),
-    }
-    recent_sessions = (
-        TrainingSession.objects.filter(status="COMPLETED")
-        .select_related("user", "scenario")
-        .order_by("-start_time")[:6]
-    )
-    context = _app_context(request, "admin_dashboard", "Admin Dashboard", is_admin=True)
-    context.update(
-        {
-            "stats": stats,
-            "recent_sessions": recent_sessions,
-        }
-    )
-    return render(request, "admin/dashboard.html", context)
-
-
-@login_required
-@role_required("ADMIN")
-def admin_scoring_reviews_view(request):
-    evaluations = (
-        BoundaryTurnEvaluation.objects.exclude(
-            review_scope=BoundaryTurnEvaluation.ReviewScopes.NONE
-        )
-        .select_related(
-            "run",
-            "run__session",
-            "run__session__user",
-            "run__session__scenario",
-            "reviewed_by",
-        )
-        .order_by("-run__created_at", "-run_id", "boundary_key", "trainee_turn_number")
-    )
-
-    boundary = request.GET.get("boundary", "").strip().upper()
-    if boundary in BoundaryTurnEvaluation.BoundaryKeys.values:
-        evaluations = evaluations.filter(boundary_key=boundary)
-    else:
-        boundary = ""
-
-    scope = request.GET.get("scope", "").strip().upper()
-    if scope in {
-        BoundaryTurnEvaluation.ReviewScopes.REQUIRED,
-        BoundaryTurnEvaluation.ReviewScopes.QUALITY_SAMPLE,
-    }:
-        evaluations = evaluations.filter(review_scope=scope)
-    else:
-        scope = ""
-
-    reason = request.GET.get("reason", "").strip().upper()
-    if reason in BoundaryTurnEvaluation.ReviewReasons.values:
-        evaluations = evaluations.filter(review_reason=reason)
-    else:
-        reason = ""
-
-    query = request.GET.get("q", "").strip()
-    if query:
-        evaluations = evaluations.filter(
-            Q(run__session__user__email__icontains=query)
-            | Q(run__session__user__first_name__icontains=query)
-            | Q(run__session__user__last_name__icontains=query)
-            | Q(run__session__scenario__title__icontains=query)
-            | Q(evidence_interpretation__icontains=query)
-        )
-
-    rows = grouped_review_queue(evaluations)
-    status = request.GET.get("status", "pending").strip().lower()
-    if status == "reviewed":
-        rows = [row for row in rows if not row["is_pending"]]
-    elif status == "all":
-        pass
-    else:
-        status = "pending"
-        rows = [row for row in rows if row["is_pending"]]
-
-    all_selected = BoundaryTurnEvaluation.objects.exclude(
-        review_scope=BoundaryTurnEvaluation.ReviewScopes.NONE
-    )
-    pending_required = (
-        all_selected.filter(
-            review_scope=BoundaryTurnEvaluation.ReviewScopes.REQUIRED,
-            review_status=BoundaryTurnEvaluation.ReviewStatuses.PENDING,
-        )
-        .values("run_id", "boundary_key")
-        .distinct()
-        .count()
-    )
-    pending_samples = (
-        all_selected.filter(
-            review_scope=BoundaryTurnEvaluation.ReviewScopes.QUALITY_SAMPLE,
-            review_status=BoundaryTurnEvaluation.ReviewStatuses.PENDING,
-        )
-        .values("run_id", "boundary_key")
-        .distinct()
-        .count()
-    )
-    total_groups = (
-        all_selected.values("run_id", "boundary_key").distinct().count()
-    )
-    pending_groups = (
-        all_selected.filter(
-            review_status=BoundaryTurnEvaluation.ReviewStatuses.PENDING
-        )
-        .values("run_id", "boundary_key")
-        .distinct()
-        .count()
-    )
-
-    paginator = Paginator(rows, 20)
-    page_obj = paginator.get_page(request.GET.get("page"))
-    query_params = request.GET.copy()
-    query_params.pop("page", None)
-    context = _app_context(
-        request,
-        "admin_scoring_reviews",
-        "Score Review Queue",
-        is_admin=True,
-    )
-    context.update(
-        {
-            "page_obj": page_obj,
-            "status_filter": status,
-            "scope_filter": scope,
-            "boundary_filter": boundary,
-            "reason_filter": reason,
-            "search_query": query,
-            "boundary_choices": BoundaryTurnEvaluation.BoundaryKeys.choices,
-            "reason_choices": BoundaryTurnEvaluation.ReviewReasons.choices,
-            "queue_stats": {
-                "required": pending_required,
-                "samples": pending_samples,
-                "reviewed": max(total_groups - pending_groups, 0),
-                "total": total_groups,
-            },
-            "review_sample_percent": round(
-                settings.BOUNDARY_JUDGE_REVIEW_SAMPLE_RATE * 100,
-                1,
-            ),
-            "query_without_page": query_params.urlencode(),
-        }
-    )
-    return render(request, "admin/scoring_reviews.html", context)
-
-
-@login_required
-@role_required("ADMIN")
-def admin_scoring_review_detail_view(request, run_id, boundary_key):
-    boundary_key = boundary_key.upper()
-    if boundary_key not in BoundaryTurnEvaluation.BoundaryKeys.values:
-        raise Http404
-    run = get_object_or_404(
-        BoundaryEvaluationRun.objects.select_related(
-            "session",
-            "session__user",
-            "session__scenario",
-        ),
-        pk=run_id,
-    )
-    evaluations = list(
-        run.turn_evaluations.filter(boundary_key=boundary_key)
-        .exclude(review_scope=BoundaryTurnEvaluation.ReviewScopes.NONE)
-        .select_related(
-            "trainee_message",
-            "help_seeker_message",
-            "reviewed_by",
-        )
-        .order_by("trainee_turn_number", "id")
-    )
-    if not evaluations:
-        raise Http404
-
-    invalid_form = None
-    invalid_evaluation_id = None
-    if request.method == "POST":
-        action = request.POST.get("action")
-        if action == "confirm_all":
-            pending = [
-                evaluation
-                for evaluation in evaluations
-                if evaluation.review_status
-                == BoundaryTurnEvaluation.ReviewStatuses.PENDING
-            ]
-            for evaluation in pending:
-                evaluation.review_status = (
-                    BoundaryTurnEvaluation.ReviewStatuses.CONFIRMED
-                )
-                evaluation.corrected_score = None
-                evaluation.corrected_judgement = ""
-                evaluation.reviewed_by = request.user
-                evaluation.reviewed_at = timezone.now()
-                evaluation.save(
-                    update_fields=[
-                        "review_status",
-                        "corrected_score",
-                        "corrected_judgement",
-                        "reviewed_by",
-                        "reviewed_at",
-                    ]
-                )
-            apply_human_review_resolution(run, boundary_key)
-            messages.success(
-                request,
-                f"Confirmed {len(pending)} pending judgement"
-                f"{'' if len(pending) == 1 else 's'}.",
-            )
-            return redirect(
-                "admin_scoring_review_detail",
-                run_id=run.id,
-                boundary_key=boundary_key,
-            )
-
-        evaluation_id = request.POST.get("evaluation_id", "")
-        evaluation = next(
-            (
-                item
-                for item in evaluations
-                if str(item.id) == evaluation_id
-            ),
-            None,
-        )
-        if evaluation is None:
-            raise Http404
-        invalid_evaluation_id = evaluation.id
-        invalid_form = BoundaryTurnReviewForm(
-            request.POST,
-            instance=evaluation,
-            prefix=f"review-{evaluation.id}",
-        )
-        if invalid_form.is_valid():
-            reviewed = invalid_form.save(commit=False)
-            reviewed.reviewed_by = request.user
-            reviewed.reviewed_at = timezone.now()
-            reviewed.save()
-            apply_human_review_resolution(run, boundary_key)
-            messages.success(
-                request,
-                f"Saved the review for turn {reviewed.trainee_turn_number}.",
-            )
-            return redirect(
-                "admin_scoring_review_detail",
-                run_id=run.id,
-                boundary_key=boundary_key,
-            )
-
-    review_rows = []
-    for evaluation in evaluations:
-        form = (
-            invalid_form
-            if invalid_evaluation_id == evaluation.id
-            else BoundaryTurnReviewForm(
-                instance=evaluation,
-                prefix=f"review-{evaluation.id}",
-            )
-        )
-        review_rows.append({"evaluation": evaluation, "form": form})
-
-    group = grouped_review_queue(
-        run.turn_evaluations.filter(boundary_key=boundary_key)
-        .exclude(review_scope=BoundaryTurnEvaluation.ReviewScopes.NONE)
-        .select_related("run")
-    )[0]
-    context = _app_context(
-        request,
-        "admin_scoring_reviews",
-        f"{group['boundary_label']} Review",
-        is_admin=True,
-    )
-    context.update(
-        {
-            "run": run,
-            "group": group,
-            "review_rows": review_rows,
-            "pending_count": sum(
-                item.review_status
-                == BoundaryTurnEvaluation.ReviewStatuses.PENDING
-                for item in evaluations
-            ),
-        }
-    )
-    return render(request, "admin/scoring_review_detail.html", context)
+    return admin_users_view(request)
 
 
 @login_required
@@ -1137,6 +794,12 @@ def admin_users_view(request):
 
         if action == "delete_user":
             deleted_label = user.full_name_or_email
+            if request.POST.get('confirm_delete') != str(user.pk):
+                messages.error(request, 'Explicit deletion confirmation is required.')
+                return redirect('admin_users')
+            if user.training_sessions.exists():
+                messages.error(request, 'This account has research records. Deactivate it to preserve those records.')
+                return redirect('admin_users')
             user.delete()
             messages.success(request, f"Deleted user {deleted_label}.")
         return redirect("admin_users")
@@ -1166,133 +829,3 @@ def admin_users_view(request):
         }
     )
     return render(request, "admin/users.html", context)
-
-
-@login_required
-@role_required("ADMIN")
-@require_safe
-def admin_prompts_view(request):
-    prompt_groups = []
-    for key, label in (("ROLE_PLAY", "Role-play"), ("FEEDBACK", "Feedback"), ("REFLECTION", "Reflection")):
-        shared = DEFAULT_PROMPT_CONTEXTS[key] + "\n\n" + DEFAULT_PROMPT_METHODS[key]
-        if key == "ROLE_PLAY":
-            shared += "\n\n" + ROLEPLAY_OPENING_INSTRUCTIONS + "\n\n" + ROLEPLAY_CONTINUATION_INSTRUCTIONS
-        prompts = [{"name": "Shared instructions", "content": shared}]
-        for boundary in (ROLEPLAY_SCENARIOS if key == "ROLE_PLAY" else ("AGENCY", "RELATIONSHIP", "SAFETY", "INTEGRATED")):
-            content = scenario_prompt_context_for(key, boundary)
-            if key == "ROLE_PLAY":
-                scenario = ROLEPLAY_SCENARIOS[boundary]
-                content += "\n\n" + "\n\n".join(persona_prompt_for(boundary, mode) for mode in scenario["personas"])
-            prompts.append({"name": boundary, "content": content})
-        prompt_groups.append({
-            "key": key.lower(), "title": f"{label} prompts", "tab_label": label,
-            "description": "Code-managed in training/prompts.py. Read-only in Admin.",
-            "prompts": prompts, "count": len(prompts),
-        })
-    selected = request.GET.get("group", "role_play")
-    active_group = next((g for g in prompt_groups if g["key"] == selected), prompt_groups[0])
-    active_group["is_active"] = True
-    context = _app_context(request, "admin_prompts", "Admin Prompt Management", is_admin=True)
-    context.update(prompt_groups=prompt_groups, active_group=active_group)
-    return render(request, "admin/prompts.html", context)
-
-
-@login_required
-@role_required("ADMIN")
-def admin_analytics_view(request):
-    user_model = request.user.__class__
-    trainee_choices = (
-        user_model.objects.filter(
-            role="TRAINEE",
-            training_sessions__isnull=False,
-        )
-        .distinct()
-        .order_by("first_name", "last_name", "email")
-    )
-    selected_trainee = None
-    selected_id = request.GET.get("trainee", "").strip()
-    if selected_id.isdigit():
-        selected_trainee = trainee_choices.filter(id=int(selected_id)).first()
-
-    snapshot = admin_analytics_snapshot(selected_trainee=selected_trainee)
-    trainee_rows = (
-        user_model.objects.filter(role="TRAINEE")
-        .annotate(
-            completed_session_count=Count(
-                "training_sessions",
-                filter=Q(
-                    training_sessions__status=TrainingSession.Statuses.COMPLETED,
-                ),
-                distinct=True,
-            ),
-            observed_session_count=Count(
-                "training_sessions",
-                filter=Q(
-                    training_sessions__status=TrainingSession.Statuses.COMPLETED,
-                    training_sessions__feedback__scores__observed=True,
-                    training_sessions__feedback__scores__score__isnull=False,
-                    training_sessions__feedback__scores__rubric_version=RUBRIC_VERSION,
-                    training_sessions__feedback__scores__criterion__in=[
-                        FeedbackScore.Criteria.AGENCY,
-                        FeedbackScore.Criteria.RELATIONSHIP,
-                        FeedbackScore.Criteria.SAFETY,
-                    ],
-                ),
-                distinct=True,
-            ),
-            average_score=Avg(
-                "training_sessions__feedback__scores__score",
-                filter=Q(
-                    training_sessions__status=TrainingSession.Statuses.COMPLETED,
-                    training_sessions__feedback__scores__observed=True,
-                    training_sessions__feedback__scores__score__isnull=False,
-                    training_sessions__feedback__scores__rubric_version=RUBRIC_VERSION,
-                    training_sessions__feedback__scores__criterion__in=[
-                        FeedbackScore.Criteria.AGENCY,
-                        FeedbackScore.Criteria.RELATIONSHIP,
-                        FeedbackScore.Criteria.SAFETY,
-                    ],
-                ),
-            ),
-            last_activity=Max(
-                "training_sessions__end_time",
-                filter=Q(
-                    training_sessions__status=TrainingSession.Statuses.COMPLETED,
-                ),
-            ),
-        )
-        .order_by(
-            F("last_activity").desc(nulls_last=True),
-            "first_name",
-            "last_name",
-            "email",
-        )
-    )
-    context = _app_context(request, "admin_analytics", "Admin Analytics", is_admin=True)
-    context.update(
-        {
-            "snapshot": snapshot,
-            "selected_trainee": selected_trainee,
-            "trainee_choices": trainee_choices,
-            "trainee_rows": trainee_rows,
-        }
-    )
-    return render(request, "admin/analytics.html", context)
-
-
-@login_required
-@role_required("ADMIN")
-def admin_settings_view(request):
-    settings_obj = PlatformSetting.get_solo()
-    if request.method == "POST":
-        form = PlatformSettingForm(request.POST, instance=settings_obj)
-        if form.is_valid():
-            form.save()
-            messages.success(request, "Platform settings saved successfully.")
-            return redirect("admin_settings")
-    else:
-        form = PlatformSettingForm(instance=settings_obj)
-
-    context = _app_context(request, "admin_settings", "Admin Settings", is_admin=True)
-    context.update({"form": form})
-    return render(request, "admin/settings.html", context)

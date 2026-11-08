@@ -11,7 +11,7 @@ from django.urls import reverse
 class UnifiedFeedbackMigrationTests(TransactionTestCase):
     def test_historical_modes_keep_records_and_show_all_saved_review_content(self):
         before = [('training', '0033_feedback_overview')]
-        after = [('training', '0034_remove_trainingsession_feedback_mode')]
+        after = [('training', '0035_trainingsession_failure_category_and_more')]
         executor = MigrationExecutor(connection)
         executor.migrate(before)
         self.addCleanup(lambda: MigrationExecutor(connection).migrate(after))
@@ -30,6 +30,7 @@ class UnifiedFeedbackMigrationTests(TransactionTestCase):
                 trainee_message_id=message.pk, feedback_type='affirmation', feedback_text='You invited their priorities.')
             feedback = apps.get_model('training', 'Feedback').objects.create(
                 session_id=session.pk, overview='Saved overview', strengths='Saved strengths', improvements='Saved considerations')
+            apps.get_model('training', 'FeedbackScore').objects.create(feedback_id=feedback.pk, criterion='AGENCY', score=2, rationale='Historical rating')
             apps.get_model('training', 'FeedbackReviewItem').objects.create(
                 feedback_id=feedback.pk, message_id=message.pk, turn_index=1,
                 better_reply='What would help?', why_it_matters='Preserves choice.')
@@ -48,6 +49,8 @@ class UnifiedFeedbackMigrationTests(TransactionTestCase):
             self.assertEqual(session.messages.get().content, 'What matters to you?')
             self.assertEqual(session.messages.get().assessment.feedback_text, 'You invited their priorities.')
             self.assertEqual(session.feedback.review_items.count(), 1)
+            self.assertEqual(session.feedback.scores.get().score, 2)
+            self.assertEqual(session.feedback.scores.get().rationale, 'Historical rating')
             self.assertEqual(session.reflection.reflection_text, 'Saved notes')
             self.assertEqual(session.reflection_messages.get().content, 'Saved reflection')
             with patch('training.services.assessment.task_call') as call:

@@ -1,5 +1,6 @@
 """Per-turn assessment, saved review, safety and reflection tasks."""
 import json
+import uuid
 import logging
 from typing import Literal
 
@@ -8,14 +9,11 @@ from django.db import transaction
 from django.db.models import F
 from pydantic import BaseModel, Field, model_validator
 
-from training.models import (
-    Feedback, FeedbackReviewItem, Message, ReflectionMessage, RoleplaySafetyCheck,
-    TrainingSession, TurnAssessment,
-)
+from training.models import Feedback, FeedbackReviewItem, ReflectionMessage, RoleplaySafetyCheck, TrainingSession, TurnAssessment
 from training.prompts import REFLECTION_OPENING, REFLECTION_USER_SAFETY, ASSESSMENT_RUBRIC, persona_prompt_for
 
 logger = logging.getLogger(__name__)
-SAFE_FALLBACK = "I need a moment before we continue."
+from training.services.suspension import PracticeFailure, attention
 
 
 def lock_session(session):
@@ -126,9 +124,16 @@ def assessment_records(session):
 
 
 def assess_turn(session, message):
+    token = session.processing_token
+    session.refresh_from_db()
+    if session.status != 'IN_PROGRESS' or session.processing_token != token:
+        raise PracticeFailure('SESSION_NOT_ACTIVE')
     existing = TurnAssessment.objects.filter(trainee_message=message).first()
     if existing:
+        if not existing.succeeded:
+            raise PracticeFailure('HISTORICAL_ASSESSMENT_UNAVAILABLE')
         return existing
+    token = session.processing_token
     previous = assessment_records(session)
     context = dict(
         scenario_name=session.scenario.boundary_type.title(),
@@ -140,23 +145,22 @@ def assess_turn(session, message):
         transcript=json.dumps(transcript(session, message), ensure_ascii=False),
         assessment_state=json.dumps(previous, ensure_ascii=False),
     )
-    succeeded = True
     try:
         result = task_call('ASSESSMENT', context, AssessmentResult)
         record = result.model_dump()
         level, kind, text, cue = result.overall_status_level, result.feedback_type, result.feedback_text, result.roleplay_cue
-    except Exception:
-        # Missing evidence is never a failing grade, nor fabricated feedback.
-        logger.warning('Assessment unavailable for message %s', message.pk)
-        succeeded = False
-        level = previous[-1]['overall_status_level'] if previous else 0
-        kind, text, cue = 'none', '', ''
-        record = {'uncertainty': 'Assessment unavailable; no judgement made.'}
+    except Exception as exc:
+        raise PracticeFailure('ASSESSMENT_FAILED') from exc
     record['turn_id'] = message.pk
-    return TurnAssessment.objects.get_or_create(trainee_message=message, defaults=dict(
-        overall_status_level=level, feedback_type=kind, feedback_text=text or '', roleplay_cue=cue,
-        record=record, succeeded=succeeded,
-    ))[0]
+    with transaction.atomic():
+        lock_session(session)
+        session.refresh_from_db()
+        if session.status != 'IN_PROGRESS' or session.processing_token != token:
+            raise PracticeFailure('REQUEST_INTERRUPTED')
+        return TurnAssessment.objects.get_or_create(trainee_message=message, defaults=dict(
+            overall_status_level=level, feedback_type=kind, feedback_text=text or '', roleplay_cue=cue,
+            record=record, succeeded=True,
+        ))[0]
 
 
 def checked_reply(session, candidate):
@@ -179,19 +183,21 @@ def checked_reply(session, candidate):
             logger.warning('Safety checker failed closed for session %s', session.pk)
             RoleplaySafetyCheck.objects.create(session=session, verdict='ERROR', reason_codes=['CHECKER_FAILURE'])
         break
-    return SAFE_FALLBACK, False
+    raise PracticeFailure('SAFETY_CHECK_FAILED')
 
 
 @transaction.atomic
 def saved_review(session):
     # Serialize generation: repeat visits and simultaneous requests reuse exactly the same feedback.
     lock_session(session)
+    session.refresh_from_db()
     existing = Feedback.objects.filter(session=session).first()
     if existing:
         return existing
+    if session.review_attention_at:
+        return None
     records = assessment_records(session)
     level = records[-1]['overall_status_level'] if records else 0
-    source = Feedback.GenerationSources.PLACEHOLDER
     try:
         result = task_call('SESSION_REVIEW', dict(
             scenario=session.scenario.boundary_type, transcript=transcript(session), assessments=records,
@@ -199,10 +205,8 @@ def saved_review(session):
         from training.services.ai import _provider, _feedback_source_for_provider
         source = _feedback_source_for_provider(_provider())
     except Exception:
-        logger.warning('Review synthesis unavailable for session %s', session.pk)
-        result = ReviewResult(strengths='', considerations=(
-            'The session overview is unavailable. You can review the conversation and any saved feedback below.'
-        ))
+        attention(session, 'review_attention_at', 'REVIEW_FAILED')
+        return None
     feedback = Feedback.objects.create(session=session, overall_score=level or None,
         overview=result.overview, strengths=result.strengths, improvements=result.considerations, generation_source=source)
     trainee_messages = {m.pk: m for m in session.messages.filter(sender_type='USER')}
@@ -244,30 +248,50 @@ def reflection_context(session, feedback, latest):
     return dict(scenario_name=session.scenario.boundary_type.title(), public_scenario_context='See disclosed transcript.',
         session_transcript=json.dumps(transcript(session), ensure_ascii=False),
         assessment_records=json.dumps(evidence, ensure_ascii=False),
-        visible_overall_feedback=feedback.overview + '\n' + feedback.strengths + '\n' + feedback.improvements,
+        visible_overall_feedback=(feedback.overview + '\n' + feedback.strengths + '\n' + feedback.improvements) if feedback else '',
         visible_review_examples=json.dumps(list(feedback.review_items.values(
-            'message_id', 'message_excerpt', 'why_it_matters', 'better_reply')), ensure_ascii=False),
+            'message_id', 'message_excerpt', 'why_it_matters', 'better_reply')) if feedback else [], ensure_ascii=False),
         reflection_chat_history=json.dumps(list(session.reflection_messages.values('sender_type', 'content')), ensure_ascii=False),
         latest_reflection_message=latest)
 
 
-@transaction.atomic
-def reflect(session, feedback, content, request_id):
-    lock_session(session)
-    existing = ReflectionMessage.objects.filter(session=session, request_id=request_id).first()
-    if existing and session.reflection_messages.filter(pk__gt=existing.pk, sender_type='AI').exists():
-        return True
-    if existing:
-        content = existing.content
-    context = reflection_context(session, feedback, content)
-    if not existing:
-        ReflectionMessage.objects.create(session=session, sender_type='USER', content=content, request_id=request_id)
+def reflect(session, feedback, content, request_id, *, researcher_retry=False):
+    with transaction.atomic():
+        lock_session(session)
+        session.refresh_from_db()
+        existing = ReflectionMessage.objects.filter(session=session, request_id=request_id).first()
+        if existing:
+            if session.reflection_messages.filter(pk__gt=existing.pk, sender_type='AI').exists():
+                return True
+            if not researcher_retry:
+                return False
+            content = existing.content
+        if session.reflection_attention_at or (session.processing and not researcher_retry):
+            return False
+        if not existing:
+            ReflectionMessage.objects.create(session=session, sender_type='USER', content=content, request_id=request_id)
+        session.processing = True
+        session.processing_token = uuid.uuid4()
+        session.save(update_fields=['processing', 'processing_token'])
+        token = session.processing_token
     try:
+        context = reflection_context(session, feedback, content)
         result = task_call('REFLECTION_CHAT', context, ReflectionResult)
     except Exception:
-        logger.warning('Reflection task unavailable for session %s', session.pk)
+        with transaction.atomic():
+            lock_session(session)
+            session.refresh_from_db()
+            if session.processing_token == token:
+                attention(session, 'reflection_attention_at', 'REFLECTION_FAILED')
+                TrainingSession.objects.filter(pk=session.pk, processing_token=token).update(processing=False)
         return False
-    ReflectionMessage.objects.create(session=session, sender_type='AI', content=result.reply)
+    with transaction.atomic():
+        lock_session(session)
+        session.refresh_from_db()
+        if session.reflection_attention_at or session.processing_token != token:
+            return False
+        ReflectionMessage.objects.create(session=session, sender_type='AI', content=result.reply)
+        TrainingSession.objects.filter(pk=session.pk).update(processing=False)
     return True
 
 

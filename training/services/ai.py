@@ -1,119 +1,44 @@
 import logging
 import re
-import unicodedata
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from difflib import SequenceMatcher
 from types import SimpleNamespace
 from typing import Any
-
 from django.conf import settings
 from django.db import transaction
-from django.db.models import F
 from google import genai
 from google.genai import types as google_types
 from openai import OpenAI
-from pydantic import BaseModel, Field
+from training.content import boundary_framework_for
+from training.prompts import (CMCV_FRAMEWORK_VERSION, ROLEPLAY_CONTINUATION_INSTRUCTIONS,
+    ROLEPLAY_OPENING_INSTRUCTIONS, ROLEPLAY_SAFETY_CONSTRAINTS, default_prompt_parts,
+    scenario_prompt_context_for, persona_prompt_for)
+from training.models import Feedback, Message, Scenario
+from training.services.suspension import PracticeFailure, pause
 
-from training.content import (
-    AUTO_TRAINEE_REPLY_FALLBACKS,
-    AUTO_TRAINEE_REPLIES,
-    BOUNDARY_DIMENSION_ORDER,
-    PLACEHOLDER_REPLY_VARIANTS,
-    PLACEHOLDER_IMPROVEMENTS,
-    PLACEHOLDER_REPLIES,
-    PLACEHOLDER_STRENGTHS,
-    auto_trainee_reply_for,
-    boundary_framework_for,
-    boundary_framework_for_dimension,
-)
-from training.prompts import (
-    CMCV_FRAMEWORK_VERSION,
-    ROLEPLAY_CONTINUATION_INSTRUCTIONS,
-    ROLEPLAY_OPENING_INSTRUCTIONS,
-    ROLEPLAY_SAFETY_CONSTRAINTS,
-    default_prompt_parts,
-    opening_message_for,
-    scenario_prompt_context_for,
-    persona_prompt_for,
-)
-from training.models import (
-    BoundaryEvaluationRun,
-    BoundaryTurnEvaluation,
-    Feedback,
-    FeedbackReviewItem,
-    FeedbackScore,
-    Message,
-    Scenario,
-    TrainingSession,
-)
-from training.rubrics.boundaries import BOUNDARY_RUBRICS
-from training.services.boundary_scoring import (
-    BoundaryProcessStepResult,
-    OUTCOME_LABELS,
-    RUBRIC_VERSION,
-    conservative_median_score,
-    evaluate_boundary_conversation,
-    evaluate_boundary_session,
-    prompt_rubric_contract,
-)
-from training.services.geval import (
-    EVIDENCE_RUBRIC_VERSION,
-    GEVAL_PROMPT_VERSION,
-    GEVAL_VERSION,
-    aggregate_persisted_geval_boundary,
-    ensure_reliable_geval_run,
-    latest_resolved_geval_run,
-)
 
 logger = logging.getLogger(__name__)
 
+
 DEFAULT_RESPONSE_LANGUAGE = "English (UK)"
+
+
 ROLEPLAY_MAX_OUTPUT_TOKENS = 320
+
+
 ROLEPLAY_REPAIR_ATTEMPTS = 2
+
+
 DEMO_TRAINEE_MAX_OUTPUT_TOKENS = 220
+
+
 DEMO_TRAINEE_REPAIR_ATTEMPTS = 2
-PRODUCTION_SCORING_VERSION = "HYBRID-BOUNDARY-1.0"
-JUDGE_ACCEPTED_DECISIONS = {"LLM_ACCEPTED", "LLM_CONSENSUS_ACCEPTED"}
-REVIEW_REQUIRED_RATIONALE = (
-    "Boundary-specific feedback was identified, but the protected scorer could not "
-    "confirm enough reliable evidence to assign a level. This dimension needs review."
-)
-
-
-class BoundaryScorePayload(BaseModel):
-    boundary_key: str
-    observed: bool
-    score: int | None = Field(default=None, ge=1, le=5)
-    evidence: str = ""
-    rationale: str = ""
-    next_move: str = ""
-
-
-class FeedbackPayload(BaseModel):
-    boundary_scores: list[BoundaryScorePayload]
-    what_worked: list[str]
-    next_boundary_moves: list[str]
-    review_items: list["FeedbackReviewItemPayload"] = Field(default_factory=list)
-
-
-class FeedbackReviewItemPayload(BaseModel):
-    trainee_turn_number: int = Field(ge=1, le=20)
-    boundary_key: str = FeedbackReviewItem.BoundaryKeys.AGENCY
-    issue_label: str
-    why_it_matters: str
-    better_reply: str
-
-
-FeedbackPayload.model_rebuild()
 
 
 @dataclass(frozen=True)
 class GeneratedTraineeReply:
     content: str
     response_source: str
-    used_fallback: bool = False
-    fallback_reason: str = ""
-    fallback_notice: str = ""
 
 
 @dataclass(frozen=True)
@@ -126,45 +51,6 @@ class BoundaryStatusIndicator:
     cue: str
 
 
-@dataclass(frozen=True)
-class BoundaryDimensionIndicator:
-    key: str
-    name: str
-    definition: str
-    score: int | None
-    tone: str
-    label: str
-    summary: str
-    observed: bool
-    rubric_version: str
-    evidence_met: tuple[str, ...]
-    evidence_missing: tuple[str, ...]
-    major_concerns: tuple[str, ...]
-    critical_breaches: tuple[str, ...]
-    evidence_quotes: tuple[str, ...]
-    expected_move_label: str
-    outcome: str
-    outcome_label: str
-    process_steps: tuple
-    score_source: str = "RULE_BASELINE"
-    resolution_status: str = ""
-
-
-@dataclass(frozen=True)
-class BoundaryMapIndicator:
-    dimensions: list[BoundaryDimensionIndicator]
-    scenario_focus_key: str
-    scenario_focus_name: str
-    scenario_focus_definition: str
-    scenario_focus_score: int | None
-    scenario_focus_cue: str
-    watchpoint_key: str
-    watchpoint_name: str
-    watchpoint_definition: str
-    watchpoint_score: int | None
-    watchpoint_cue: str
-
-
 def _provider() -> str:
     value = (settings.LLM_PROVIDER or "").strip().lower()
     if value in {"google", "gemini"}:
@@ -172,25 +58,6 @@ def _provider() -> str:
     if value == "openai":
         return "openai"
     return "openai" if settings.OPENAI_API_KEY else "google"
-
-
-def _provider_label(provider: str) -> str:
-    return "OpenAI" if provider == "openai" else "Gemini"
-
-
-def _feedback_source_for_provider(provider: str) -> str:
-    return (
-        Feedback.GenerationSources.OPENAI
-        if provider == "openai"
-        else Feedback.GenerationSources.GEMINI
-    )
-
-
-def _live_feedback_available(provider: str | None = None) -> bool:
-    provider = provider or _provider()
-    if provider == "google":
-        return bool(settings.GEMINI_API_KEY)
-    return bool(settings.OPENAI_API_KEY)
 
 
 def _openai_client() -> OpenAI:
@@ -205,17 +72,6 @@ def _google_client() -> genai.Client:
     return genai.Client(api_key=settings.GEMINI_API_KEY)
 
 
-def get_prompt_for_type(prompt_type: str, scenario=None):
-    return SimpleNamespace(
-        **default_prompt_parts(prompt_type, scenario),
-        framework_version=CMCV_FRAMEWORK_VERSION,
-    )
-
-
-def _cmcv_prompt_layers(prompt) -> str:
-    return f"{prompt.context.strip()}\n\n{prompt.method.strip()}"
-
-
 ROLEPLAY_INTERNAL_LEAK_MARKERS = (
     "cmcv",
     "editable context",
@@ -228,21 +84,11 @@ ROLEPLAY_INTERNAL_LEAK_MARKERS = (
     "hidden evaluation",
 )
 
+
 ROLEPLAY_COACHING_LEAK_PATTERNS = (
     re.compile(r"\b(?:agency|relationship|safety|integrated)\s+boundary\b", re.I),
     re.compile(r"\b(?:support without fixing|care without overextending|staying with people in distress)\b", re.I),
 )
-
-
-def _contains_internal_roleplay_leak(text: str) -> bool:
-    normalized = " ".join((text or "").lower().split())
-    return any(marker in normalized for marker in ROLEPLAY_INTERNAL_LEAK_MARKERS)
-
-
-def _contains_roleplay_coaching_leak(text: str) -> bool:
-    """Reject dialogue that tells the trainee which assessed response to give."""
-    compact = " ".join((text or "").split())
-    return any(pattern.search(compact) for pattern in ROLEPLAY_COACHING_LEAK_PATTERNS)
 
 
 def _strip_roleplay_framework_prefix(text: str) -> str:
@@ -257,135 +103,6 @@ def _strip_roleplay_framework_prefix(text: str) -> str:
     return cleaned.strip()
 
 
-def _placeholder_feedback(session) -> FeedbackPayload:
-    boundary_key = session.scenario.boundary_type
-    target_key = boundary_framework_for(boundary_key).get("dimension_key", "agency")
-    observed_keys = (
-        BOUNDARY_DIMENSION_ORDER
-        if target_key == "integrated"
-        else (target_key,)
-    )
-    latest_reply = (
-        session.messages.filter(sender_type=Message.SenderTypes.USER)
-        .order_by("-created_at", "-id")
-        .first()
-    )
-    evidence = latest_reply.content if latest_reply else ""
-    return FeedbackPayload(
-        boundary_scores=[
-            BoundaryScorePayload(
-                boundary_key=key.upper(),
-                observed=key in observed_keys,
-                score=3 if key in observed_keys else None,
-                evidence=evidence if key in observed_keys else "",
-                rationale=(
-                    "Backup Score 3: the response shows partial boundary awareness, "
-                    "but the live assessment model was unavailable."
-                    if key in observed_keys
-                    else "This boundary was not sufficiently elicited in the session."
-                ),
-                next_move=(
-                    "State the relevant boundary explicitly and offer one collaborative next step."
-                    if key in observed_keys
-                    else ""
-                ),
-            )
-            for key in BOUNDARY_DIMENSION_ORDER
-        ],
-        what_worked=PLACEHOLDER_STRENGTHS[boundary_key][:2],
-        next_boundary_moves=PLACEHOLDER_IMPROVEMENTS[boundary_key][:2],
-        review_items=_placeholder_review_items(session),
-    )
-
-
-def _placeholder_review_items(session) -> list[FeedbackReviewItemPayload]:
-    user_messages = list(session.messages.filter(sender_type=Message.SenderTypes.USER))
-    boundary_type = session.scenario.boundary_type
-    helpful_variants = AUTO_TRAINEE_REPLIES.get(boundary_type, {}).get("helpful") or AUTO_TRAINEE_REPLY_FALLBACKS["helpful"]
-    issue_map = {
-        Scenario.BoundaryTypes.AGENCY: (
-            "AGENCY",
-            "Choice could remain clearer",
-            "The reply could do more to preserve the help-seeker's decision-making.",
-        ),
-        Scenario.BoundaryTypes.INTEGRATED: (
-            "RELATIONSHIP",
-            "Integrated boundary could be clearer",
-            "The reply could name a sustainable role limit while preserving choice and safety.",
-        ),
-        Scenario.BoundaryTypes.SAFETY: (
-            "SAFETY",
-            "Escalation support could be more specific",
-            "The reply could make the next support step feel more concrete and less abstract.",
-        ),
-        Scenario.BoundaryTypes.RELATIONSHIP: (
-            "RELATIONSHIP",
-            "Relationship limit could be warmer and more specific",
-            "The reply could protect the trainee's limits while offering one realistic support option.",
-        ),
-    }
-    item_boundary_key, issue_label, why_it_matters = issue_map.get(
-        boundary_type,
-        (
-            "AGENCY",
-            "Response could be stronger",
-            "A more targeted peer-support reply would help the conversation move forward more safely.",
-        ),
-    )
-
-    review_items = []
-    for index, message in enumerate(user_messages[:2], start=1):
-        review_items.append(
-            FeedbackReviewItemPayload(
-                trainee_turn_number=index,
-                boundary_key=item_boundary_key,
-                issue_label=issue_label,
-                why_it_matters=why_it_matters,
-                better_reply=helpful_variants[(index - 1) % len(helpful_variants)],
-            )
-        )
-    return review_items
-
-
-def _save_feedback_review_items(
-    feedback,
-    session,
-    review_items: list[FeedbackReviewItemPayload],
-    *,
-    source: str,
-):
-    user_messages = list(session.messages.filter(sender_type=Message.SenderTypes.USER))
-    allowed_boundary_keys = {
-        FeedbackReviewItem.BoundaryKeys.AGENCY,
-        FeedbackReviewItem.BoundaryKeys.RELATIONSHIP,
-        FeedbackReviewItem.BoundaryKeys.SAFETY,
-    }
-    scenario_dimension = boundary_framework_for(
-        session.scenario.boundary_type
-    ).get("dimension_key", "agency").upper()
-    if scenario_dimension not in allowed_boundary_keys:
-        scenario_dimension = FeedbackReviewItem.BoundaryKeys.AGENCY
-    for item in review_items[:3]:
-        target_message = None
-        if 1 <= item.trainee_turn_number <= len(user_messages):
-            target_message = user_messages[item.trainee_turn_number - 1]
-        FeedbackReviewItem.objects.create(
-            feedback=feedback,
-            message=target_message,
-            turn_index=item.trainee_turn_number,
-            message_excerpt=target_message.content if target_message else "",
-            issue_label=item.issue_label,
-            why_it_matters=item.why_it_matters,
-            better_reply=item.better_reply,
-            boundary_key=(
-                item.boundary_key.strip().upper()
-                if item.boundary_key.strip().upper() in allowed_boundary_keys
-                else scenario_dimension
-            ),
-            source=source,
-        )
-
-
 def _conversation_lines(session) -> list[str]:
     speaker_map = {
         Message.SenderTypes.USER: "Trainee",
@@ -395,25 +112,6 @@ def _conversation_lines(session) -> list[str]:
         f"{speaker_map.get(message.sender_type, message.sender_type)}: {message.content}"
         for message in session.messages.all()
     ]
-
-
-def _feedback_transcript(session) -> str:
-    lines = []
-    trainee_turn = 0
-    help_seeker_turn = 0
-
-    for session_turn, message in enumerate(session.messages.all(), start=1):
-        if message.sender_type == Message.SenderTypes.USER:
-            trainee_turn += 1
-            lines.append(
-                f"Session turn {session_turn} | Trainee turn {trainee_turn}: {message.content}"
-            )
-        else:
-            help_seeker_turn += 1
-            lines.append(
-                f"Session turn {session_turn} | AI Help-seeker turn {help_seeker_turn}: {message.content}"
-            )
-    return "\n".join(lines)
 
 
 def _scenario_prompt_context(session) -> str:
@@ -438,154 +136,6 @@ def _finish_reason(response: Any) -> str:
         return ""
     reason = getattr(candidates[0], "finish_reason", "") or ""
     return str(reason)
-
-
-def _normalized_text(text: str) -> str:
-    return f" {(text or '').strip().lower()} "
-
-
-
-
-def _user_turn_count(session) -> int:
-    return session.messages.filter(sender_type=Message.SenderTypes.USER).count()
-
-
-def _latest_user_message(session):
-    return (
-        session.messages.filter(sender_type=Message.SenderTypes.USER)
-        .order_by("-created_at", "-id")
-        .first()
-    )
-
-
-def _latest_ai_message(session):
-    return (
-        session.messages.filter(sender_type=Message.SenderTypes.AI)
-        .order_by("-created_at", "-id")
-        .first()
-    )
-
-
-def _conversation_exchanges(session) -> list[tuple[str, str]]:
-    """Pair each trainee reply with the AI message that actually elicited it."""
-
-    exchanges = []
-    preceding_ai_text = ""
-    for message in session.messages.order_by("created_at", "id"):
-        if message.sender_type == Message.SenderTypes.AI:
-            preceding_ai_text = message.content
-        elif message.sender_type == Message.SenderTypes.USER:
-            exchanges.append((preceding_ai_text, message.content))
-    return exchanges
-
-
-def deterministic_feedback_assessments(session):
-    """Return the protected session-score assessment for each boundary."""
-
-    target_key = boundary_framework_for(session.scenario.boundary_type)["dimension_key"]
-    exchanges = _conversation_exchanges(session)
-    return {
-        key: evaluate_boundary_session(key, target_key, exchanges)
-        for key in BOUNDARY_DIMENSION_ORDER
-    }
-
-
-def _final_feedback_judge_run(session):
-    return latest_resolved_geval_run(
-        session,
-        purposes=[BoundaryEvaluationRun.Purposes.FINAL],
-    )
-
-
-def _accepted_judge_assessment(run, key):
-    detail = run.resolution_details.get(key.upper(), {})
-    if detail.get("decision") not in JUDGE_ACCEPTED_DECISIONS:
-        return None
-
-    assessment = aggregate_persisted_geval_boundary(
-        key,
-        run.turn_evaluations.all(),
-    )
-    protected_score = run.resolved_scores.get(key.upper())
-    if not assessment.observed or protected_score is None:
-        return None
-    return replace(assessment, score=protected_score)
-
-
-def _trusted_live_feedback_assessments(session):
-    """Keep accepted semantic evidence when a later FINAL audit is unavailable."""
-
-    runs = (
-        session.boundary_evaluation_runs.filter(
-            status=BoundaryEvaluationRun.Statuses.SUCCEEDED,
-            purpose=BoundaryEvaluationRun.Purposes.LIVE,
-            evaluator_version=GEVAL_VERSION,
-            prompt_version=GEVAL_PROMPT_VERSION,
-            rubric_version=EVIDENCE_RUBRIC_VERSION,
-            model=getattr(
-                settings,
-                "BOUNDARY_JUDGE_MODEL",
-                settings.OPENAI_MODEL,
-            ),
-        )
-        .prefetch_related("turn_evaluations")
-        .order_by("-evaluated_through_message_id", "-created_at", "-id")
-    )
-    resolved = {}
-    for run in runs:
-        for key in BOUNDARY_DIMENSION_ORDER:
-            if key in resolved:
-                continue
-            assessment = _accepted_judge_assessment(run, key)
-            if assessment is not None:
-                resolved[key] = assessment
-        if len(resolved) == len(BOUNDARY_DIMENSION_ORDER):
-            break
-    return resolved
-
-
-def final_feedback_assessments(session):
-    """Return session-wide assessments, preferring an accepted FINAL audit."""
-
-    assessments = deterministic_feedback_assessments(session)
-    judge_run = _final_feedback_judge_run(session)
-    resolved = dict(assessments)
-    if judge_run is not None:
-        for key in BOUNDARY_DIMENSION_ORDER:
-            judge_assessment = _accepted_judge_assessment(judge_run, key)
-            if judge_assessment is not None:
-                resolved[key] = judge_assessment
-
-    # A successful LIVE run may contain trusted evidence even when the final audit
-    # times out. It can fill an unobserved gap, but never overwrite a full-session
-    # deterministic or accepted FINAL assessment.
-    for key, live_assessment in _trusted_live_feedback_assessments(session).items():
-        if not resolved[key].observed:
-            resolved[key] = live_assessment
-    return resolved
-
-
-def _session_evidence_text(assessment) -> str:
-    """Format the full chronological evidence ledger for persisted feedback."""
-
-    lines = []
-    seen = set()
-    for event in assessment.events:
-        for quote in event.evidence_quotes:
-            cleaned = quote.strip()
-            marker = (event.turn_number, cleaned)
-            if not cleaned or marker in seen:
-                continue
-            seen.add(marker)
-            lines.append(
-                f'Turn {event.turn_number} | {event.move_label} | '
-                f'{event.outcome_label}: "{cleaned}"'
-            )
-    return "\n".join(lines)
-
-
-
-
 
 
 def _clean_generated_text(text: str) -> str:
@@ -656,18 +206,6 @@ def _looks_incomplete_roleplay_reply(text: str) -> bool:
     return False
 
 
-def _recent_ai_signatures(session, limit=3) -> list[str]:
-    messages = list(
-        session.messages.filter(sender_type=Message.SenderTypes.AI).values_list("content", flat=True)
-    )[-limit:]
-    signatures = []
-    for text in messages:
-        compact = " ".join((text or "").split())
-        if compact:
-            signatures.append(compact[:110])
-    return signatures
-
-
 def _recent_user_signatures(session, limit=3) -> list[str]:
     messages = list(
         session.messages.filter(sender_type=Message.SenderTypes.USER).values_list("content", flat=True)
@@ -688,18 +226,6 @@ def _repetition_ratio(left: str, right: str) -> float:
     return SequenceMatcher(None, normalized_left, normalized_right).ratio()
 
 
-def _is_repetitive_roleplay_reply(session, text: str) -> bool:
-    candidate = (text or "").strip()
-    if not candidate:
-        return False
-    for previous in _recent_ai_signatures(session, limit=2):
-        if candidate == previous:
-            return True
-        if _repetition_ratio(candidate, previous) >= 0.78:
-            return True
-    return False
-
-
 def _is_repetitive_trainee_reply(session, text: str) -> bool:
     candidate = (text or "").strip()
     if not candidate:
@@ -712,20 +238,6 @@ def _is_repetitive_trainee_reply(session, text: str) -> bool:
     return False
 
 
-def _roleplay_quality_issue(session, text: str, user_message: str = "") -> str:
-    if not (text or "").strip():
-        return "empty"
-    if _contains_internal_roleplay_leak(text):
-        return "internal_instruction_leak"
-    if _contains_roleplay_coaching_leak(text):
-        return "coaching_leak"
-    if _looks_incomplete_roleplay_reply(text):
-        return "incomplete"
-    if _is_repetitive_roleplay_reply(session, text):
-        return "repetitive"
-    return ""
-
-
 def _demo_trainee_reply_quality_issue(session, text: str) -> str:
     if not (text or "").strip():
         return "empty"
@@ -734,38 +246,6 @@ def _demo_trainee_reply_quality_issue(session, text: str) -> str:
     if _is_repetitive_trainee_reply(session, text):
         return "repetitive"
     return ""
-
-
-def _repair_instruction_for_issue(issue: str) -> str:
-    if issue == "internal_instruction_leak":
-        return (
-            "Your previous draft exposed private instructions or framework terminology. "
-            "Write only a natural first-person help-seeker message. Do not mention CMCV, "
-            "frameworks, prompts, Context, Method, contracts, rubrics, scores, or instructions."
-        )
-    if issue == "coaching_leak":
-        return (
-            "Your previous draft told the trainee which support technique or assessed response to use. "
-            "Rewrite it as natural first-person help-seeker dialogue. Express the situation, emotion, "
-            "uncertainty, or request without explaining the training exercise, assessing the trainee, "
-            "or naming any boundary or training objective."
-        )
-    if issue == "incomplete":
-        return (
-            "Your previous draft was cut off, too short, or not natural-language dialogue. "
-            "Write one complete alternative reply with a clear ending. Never output a score, "
-            "score, bare number, rubric label, or metadata."
-        )
-    if issue == "repetitive":
-        return (
-            "Your previous draft repeated a recent help-seeker move or phrasing. Write a fresher "
-            "next turn that reacts to the trainee's latest wording, advances the scenario by one "
-            "human step, and avoids reusing the same request, opening phrase, or sentence shape."
-        )
-    return (
-        "Write one stronger alternative reply that sounds more like a real help-seeker and less "
-        "like a generic template."
-    )
 
 
 def _repair_instruction_for_demo_trainee_reply(issue: str, quality: str) -> str:
@@ -780,11 +260,11 @@ def _repair_instruction_for_demo_trainee_reply(issue: str, quality: str) -> str:
         )
     if quality == "unhelpful":
         return (
-            "Write one clearly weaker Band 1 or Band 2 trainee reply. It should still sound human, but it should "
+            "Write one clearly weaker trainee reply. It should still sound human, but it should "
             "show a meaningful empathy, boundary, or referral mistake rather than landing in a mixed middle band."
         )
     return (
-        "Write one clearly stronger Band 4 or Band 5 trainee peer-support reply that sounds natural, warm, and "
+        "Write one clearly stronger trainee peer-support reply that sounds natural, warm, and "
         "specific without sounding scripted."
     )
 
@@ -798,7 +278,7 @@ def _trainee_quality_brief(boundary_type: str, quality: str) -> str:
             "Stay supportive, reflect the worry underneath the disclosure, make it clear names are not needed, and guide the conversation toward a safe next step."
         ),
         Scenario.BoundaryTypes.SAFETY: (
-            "Acknowledge the emotional weight, explain that extra support is warranted, and name one concrete, collaborative next step."
+            "Stay with the distress, explore current safety with a sensitive direct question when relevant, and consider support collaboratively without assuming escalation is needed."
         ),
         Scenario.BoundaryTypes.RELATIONSHIP: (
             "Validate the need, state a kind but explicit limit, and offer one realistic alternative source of support."
@@ -829,44 +309,6 @@ def _trainee_quality_brief(boundary_type: str, quality: str) -> str:
     )
 
 
-def _trainee_quality_band_target(boundary_type: str, quality: str) -> str:
-    helpful_map = {
-        Scenario.BoundaryTypes.AGENCY: (
-            "Aim for Band 4 to Band 5 on the Relational Focus Boundary: strong empathy, reflective listening, and one gentle open question."
-        ),
-        Scenario.BoundaryTypes.INTEGRATED: (
-            "Aim for Band 4 to Band 5 on the Privacy & Confidentiality Boundary: protect privacy clearly, avoid names/details, and stay focused on the concern."
-        ),
-        Scenario.BoundaryTypes.SAFETY: (
-            "Aim for Band 4 to Band 5 on the Role Scope & Escalation Boundary: acknowledge seriousness, stay emotionally present, and offer one concrete collaborative support step."
-        ),
-        Scenario.BoundaryTypes.RELATIONSHIP: (
-            "Aim for Band 4 to Band 5 on the Time & Availability Boundary: hold a kind but explicit availability limit and add one realistic alternative."
-        ),
-    }
-    unhelpful_map = {
-        Scenario.BoundaryTypes.AGENCY: (
-            "Aim for Band 1 to Band 2 on the Relational Focus Boundary: minimise, reassure too fast, or advise before enough understanding."
-        ),
-        Scenario.BoundaryTypes.INTEGRATED: (
-            "Aim for Band 1 to Band 2 on the Privacy & Confidentiality Boundary: invite identifying details, imply secrecy, or leave privacy limits vague."
-        ),
-        Scenario.BoundaryTypes.SAFETY: (
-            "Aim for Band 1 to Band 2 on the Role Scope & Escalation Boundary: sound abrupt, generic, emotionally thin, or weakly collaborative about extra support."
-        ),
-        Scenario.BoundaryTypes.RELATIONSHIP: (
-            "Aim for Band 1 to Band 2 on the Time & Availability Boundary: over-promise availability, accept becoming the main support, or withdraw coldly without a collaborative alternative."
-        ),
-    }
-    mapping = unhelpful_map if quality == "unhelpful" else helpful_map
-    default = (
-        "Aim for Band 1 to Band 2 with a meaningful but plausible helping error."
-        if quality == "unhelpful"
-        else "Aim for Band 4 to Band 5 with warm, boundaried, specific peer support."
-    )
-    return mapping.get(boundary_type, default)
-
-
 def _trainee_quick_reply_system_prompt(session, quality: str) -> str:
     transcript = "\n".join(_conversation_lines(session))
     recent_trainee_lines = "\n".join(f"- {line}" for line in _recent_user_signatures(session)) or "- None yet."
@@ -887,11 +329,10 @@ def _trainee_quick_reply_system_prompt(session, quality: str) -> str:
         f"{recent_trainee_lines}\n\n"
         "Quality target for this reply:\n"
         f"- {_trainee_quality_brief(session.scenario.boundary_type, quality)}\n"
-        f"- {_trainee_quality_band_target(session.scenario.boundary_type, quality)}\n"
         "- A stronger reply should usually show emotional attunement, a brief sign of understanding, scope-safe wording, and a collaborative next step that fits the scenario.\n"
         "- A weaker reply should still sound plausible and human, but it should miss at least one high-value skill or allow one meaningful boundary drift.\n"
-        "- Do not produce a middling Band 3 answer. The contrast between helpful and unhelpful mode should be obvious in empathy, boundary handling, and next-step support.\n"
-        "- Silently check empathy, boundary management, referral/scope handling, and specificity before writing the final reply.\n"
+        "- The contrast between helpful and unhelpful mode should be obvious in empathy, boundary handling, and next-step support.\n"
+        "- Silently check Agency, Relationship and Safety boundary management, emotional presence, and specificity before writing the final reply.\n"
         "- The reply must sound like a real student peer supporter, not a therapist, rubric, or system message.\n"
         "- Speak directly to the help-seeker.\n"
         "- Do not write stage directions, analysis, labels, bullet points, or role names.\n"
@@ -988,414 +429,6 @@ def _google_demo_trainee_reply(session, quality: str) -> str:
     return trainee_text
 
 
-def _template_demo_trainee_reply(session, quality: str) -> str:
-    current_turns = session.messages.filter(sender_type=Message.SenderTypes.USER).count()
-    return auto_trainee_reply_for(
-        session.scenario.boundary_type,
-        quality,
-        turn_index=current_turns,
-    )
-
-
-def _demo_trainee_fallback_notice_text(reason: str, provider: str, exc: Exception) -> str:
-    provider_label = _provider_label(provider)
-    if reason == "quota_exhausted":
-        return (
-            f"{provider_label} could not generate the quick test reply because of quota, billing, or rate limits, "
-            "so a scenario template was used instead."
-        )
-    if reason == "configuration":
-        return (
-            f"{provider_label} is not configured correctly for quick test replies right now, "
-            "so a scenario template was used instead."
-        )
-    if reason == "network":
-        return (
-            f"{provider_label} could not be reached from the current network for the quick test reply, "
-            "so a scenario template was used instead."
-        )
-    return (
-        f"{provider_label} failed to generate the quick test reply, so a scenario template was used instead."
-    )
-
-
-def _boundary_status_summary(boundary_type: str, score: int | None) -> str:
-    if score is None:
-        return (
-            "Send one trainee reply and PeerTrain will estimate how steady your current boundary sounds."
-        )
-
-    if boundary_type == Scenario.BoundaryTypes.INTEGRATED:
-        summaries = {
-            5: "You are containing identifying details while still sounding calm and supportive.",
-            4: "You are mostly protecting privacy, with only a little room to make the limit clearer.",
-            3: "Your tone is supportive, but the privacy boundary is still not fully explicit.",
-            2: "Your wording may be letting the conversation drift toward unsafe third-party details.",
-            1: "There is a strong risk that the reply invites gossip, oversharing, or unrealistic secrecy promises.",
-        }
-    elif boundary_type == Scenario.BoundaryTypes.SAFETY:
-        summaries = {
-            5: "You are pairing warmth with a concrete, compassionate next-step support option.",
-            4: "The referral direction is mostly good, but it could feel a little more specific or emotionally held.",
-            3: "You are trying to help, but the support step still sounds vague, uneven, or only partly warm.",
-            2: "The reply may feel too abrupt, too detached, or too unclear about what support comes next.",
-            1: "The help-seeker may feel brushed off, over-directed, or left alone with a cold referral.",
-        }
-    elif boundary_type == Scenario.BoundaryTypes.RELATIONSHIP:
-        summaries = {
-            5: "You are sounding caring while also naming realistic limits and a sustainable alternative.",
-            4: "Your boundary is mostly holding, though it could be a little clearer or more concrete.",
-            3: "You still sound supportive, but your limit-setting is mixed or slightly vague.",
-            2: "The boundary is starting to slip, or the alternative support route is not clear enough yet.",
-            1: "The reply is likely over-promising time, availability, or emotional responsibility.",
-        }
-    else:
-        summaries = {
-            5: "You are staying empathic and curious without rushing to fix or tidy away the distress.",
-            4: "The response is mostly containing, with just a little room to deepen or slow down.",
-            3: "Your warmth is visible, but the response still feels a bit generic, rushed, or surface-level.",
-            2: "The reply may be moving too quickly into fixing, reassurance, or low-empathy guidance.",
-            1: "The help-seeker is unlikely to feel well contained by this wording right now.",
-        }
-    return summaries[score]
-
-
-def _boundary_status_cue(boundary_type: str, score: int | None) -> str:
-    if score is None:
-        return "This live cue is only a guide. After the first trainee turn, it will react to your wording."
-
-    if boundary_type == Scenario.BoundaryTypes.INTEGRATED:
-        if score >= 4:
-            return "Keep redirecting toward the person's worry, uncertainty, and next safe step rather than names or specifics."
-        if score == 3:
-            return "Try one clearer phrase such as 'You do not need to name them for us to think this through safely.'"
-        return "Next reply: gently stop the details, avoid absolute secrecy promises, and focus on the dilemma underneath the disclosure."
-
-    if boundary_type == Scenario.BoundaryTypes.SAFETY:
-        if score >= 4:
-            return "Keep the warmth, then make the next support option concrete enough that it feels usable, not abstract."
-        if score == 3:
-            return "Try pairing care with one specific option, such as a helpline, GP, counselling service, or trusted person."
-        return "Next reply: avoid sounding like you are handing the person off. Stay present and name one realistic support step."
-
-    if boundary_type == Scenario.BoundaryTypes.RELATIONSHIP:
-        if score >= 4:
-            return "Keep naming your limits with warmth, then offer one realistic person, service, or short check-in alternative."
-        if score == 3:
-            return "Try making the limit more explicit and pair it with one concrete alternative instead of a broad promise."
-        return "Next reply: do not promise ongoing availability. Name one clear limit and one safer support option."
-
-    if score >= 4:
-        return "Keep leading with validation and gentle curiosity before shifting to suggestions or next steps."
-    if score == 3:
-        return "Try reflecting the feeling more directly and adding one open question before moving on."
-    return "Next reply: slow down, reduce fixing language, and show that you understand the emotional weight first."
-
-
-def _boundary_score_meta(score: int | None) -> tuple[str, str]:
-    if score is None:
-        return "neutral", "Waiting"
-
-    tone_map = {
-        5: "steady",
-        4: "good",
-        3: "mixed",
-        2: "wobbling",
-        1: "risk",
-    }
-    label_map = {
-        5: "Very steady",
-        4: "Mostly steady",
-        3: "Mixed",
-        2: "Wobbling",
-        1: "At risk",
-    }
-    return tone_map[score], label_map[score]
-
-
-def _boundary_dimension_definition(key: str) -> str:
-    return boundary_framework_for_dimension(key)["definition"]
-
-
-def _boundary_dimension_name(key: str) -> str:
-    return boundary_framework_for_dimension(key)["canonical_name"]
-
-
-def _boundary_dimension_cue(dimension_key: str, score: int | None) -> str:
-    if score is None:
-        return "After your first trainee turn, PeerTrain will show which boundary line needs the most attention."
-
-    if dimension_key == "relationship":
-        if score >= 4:
-            return "Keep the warmth, hold the limit, and keep moving toward one realistic alternative instead of broader reassurance."
-        if score == 3:
-            return "Try making the limit more explicit and pair it with one concrete person, service, or short check-in option."
-        return "Next reply: avoid unlimited access. Say what you can do, what you cannot do, and one safer alternative."
-
-    if dimension_key == "agency":
-        if score >= 4:
-            return "Keep the spotlight on the help-seeker. Validation plus one gentle, specific question is enough."
-        if score == 3:
-            return "Reduce fixing and keep your own story in the background unless it clearly serves the help-seeker."
-        return "Next reply: validate first, ask one grounded question, and avoid shifting into advice or your own experience."
-
-    if score >= 4:
-        return "Keep the warmth and make the next support step concrete enough that it feels usable."
-    if score == 3:
-        return "Try naming one specific support or safety step while staying emotionally present."
-    return "Next reply: if risk or complexity is rising, stay warm and move toward safety checking or extra support."
-
-
-def _judge_process_steps(run, boundary_key):
-    rubric = BOUNDARY_RUBRICS[boundary_key]
-    items = [
-        item
-        for item in run.turn_evaluations.all()
-        if item.boundary_key == boundary_key.upper()
-        and item.applicable
-        and item.expected_move_key
-    ]
-    status_map = {}
-    for move_key, _ in rubric.process_moves:
-        move_items = [
-            item for item in items if item.expected_move_key == move_key
-        ]
-        if not move_items:
-            status_map[move_key] = "not_reached"
-        elif any(item.critical_concern for item in move_items):
-            status_map[move_key] = "concern"
-        else:
-            latest = max(
-                move_items,
-                key=lambda item: (item.trainee_turn_number, item.id),
-            )
-            status_map[move_key] = {
-                "MET": "met",
-                "PARTLY_MET": "partly_met",
-                "MISSED": "missed",
-                "BOUNDARY_CONCERN": "concern",
-            }.get(latest.judgement, "not_reached")
-    return tuple(
-        BoundaryProcessStepResult(move_key, label, status_map[move_key])
-        for move_key, label in rubric.process_moves
-    )
-
-
-def _judge_backed_dimension(run, boundary_key, fallback_dimension):
-    detail = run.resolution_details.get(boundary_key.upper(), {})
-    if detail.get("decision") not in JUDGE_ACCEPTED_DECISIONS:
-        return replace(
-            fallback_dimension,
-            score_source="RULE_FALLBACK",
-            resolution_status=detail.get("decision", ""),
-        )
-
-    items = [
-        item
-        for item in run.turn_evaluations.all()
-        if item.boundary_key == boundary_key.upper() and item.applicable
-    ]
-    if not items:
-        return fallback_dimension
-    latest = max(items, key=lambda item: (item.trainee_turn_number, item.id))
-    score = run.resolved_scores.get(boundary_key.upper())
-    tone, label = _boundary_score_meta(score)
-    outcome = {
-        "MET": "met",
-        "PARTLY_MET": "partly_met",
-        "MISSED": "missed",
-        "BOUNDARY_CONCERN": "concern",
-    }.get(latest.judgement, "not_applicable")
-    outcome_label = {
-        "met": "Met",
-        "partly_met": "Partly met",
-        "missed": "Missed",
-        "concern": "Boundary concern",
-        "not_applicable": "Not applicable",
-    }[outcome]
-    is_major_concern = (
-        latest.judgement == BoundaryTurnEvaluation.Judgements.BOUNDARY_CONCERN
-        and not latest.critical_concern
-    )
-    return BoundaryDimensionIndicator(
-        key=boundary_key,
-        name=_boundary_dimension_name(boundary_key),
-        definition=_boundary_dimension_definition(boundary_key),
-        score=score,
-        tone=tone,
-        label=label,
-        summary=latest.rationale,
-        observed=True,
-        rubric_version=run.rubric_version,
-        evidence_met=(latest.expected_move,) if latest.judgement == "MET" else (),
-        evidence_missing=(
-            (latest.expected_move,) if latest.judgement != "MET" else ()
-        ),
-        major_concerns=(
-            (latest.evidence_interpretation,) if is_major_concern else ()
-        ),
-        critical_breaches=(
-            (latest.evidence_interpretation,) if latest.critical_concern else ()
-        ),
-        evidence_quotes=tuple(latest.evidence_quotes),
-        expected_move_label=latest.expected_move,
-        outcome=outcome,
-        outcome_label=outcome_label,
-        process_steps=_judge_process_steps(run, boundary_key),
-        score_source="LLM_JUDGE",
-        resolution_status=detail.get("decision", ""),
-    )
-
-
-def build_boundary_map_indicator(session) -> BoundaryMapIndicator:
-    scenario_framework = boundary_framework_for(session.scenario.boundary_type)
-    scenario_focus_key = scenario_framework["dimension_key"]
-    display_keys = (
-        list(BOUNDARY_DIMENSION_ORDER)
-        if scenario_focus_key == "integrated"
-        else [scenario_focus_key]
-    )
-    latest_user_message = _latest_user_message(session)
-    if latest_user_message is None:
-        dimensions = []
-        for key in display_keys:
-            tone, label = _boundary_score_meta(None)
-            dimensions.append(
-                BoundaryDimensionIndicator(
-                    key=key,
-                    name=_boundary_dimension_name(key),
-                    definition=_boundary_dimension_definition(key),
-                    score=None,
-                    tone=tone,
-                    label=label,
-                    summary="Waiting for your first trainee reply.",
-                    observed=False,
-                    rubric_version=RUBRIC_VERSION,
-                    evidence_met=(),
-                    evidence_missing=(),
-                    major_concerns=(),
-                    critical_breaches=(),
-                    evidence_quotes=(),
-                    expected_move_label="",
-                    outcome="not_applicable",
-                    outcome_label="Not applicable",
-                    process_steps=(),
-                )
-            )
-        return BoundaryMapIndicator(
-            dimensions=dimensions,
-            scenario_focus_key=scenario_focus_key,
-            scenario_focus_name=scenario_framework["canonical_name"],
-            scenario_focus_definition=scenario_framework["definition"],
-            scenario_focus_score=None,
-            scenario_focus_cue=_boundary_dimension_cue(scenario_focus_key, None),
-            watchpoint_key="",
-            watchpoint_name="",
-            watchpoint_definition="",
-            watchpoint_score=None,
-            watchpoint_cue="",
-        )
-
-    exchanges = _conversation_exchanges(session)
-    rubric_results = {
-        key: evaluate_boundary_conversation(
-            key=key,
-            target_key=scenario_focus_key,
-            exchanges=exchanges,
-        )
-        for key in display_keys
-    }
-    judge_run = latest_resolved_geval_run(session)
-    dimensions = []
-    for key in display_keys:
-        rubric_result = rubric_results[key]
-        score = rubric_result.score
-        tone, label = _boundary_score_meta(score)
-        if not rubric_result.observed:
-            label = "Not observed"
-        dimension = BoundaryDimensionIndicator(
-                key=key,
-                name=_boundary_dimension_name(key),
-                definition=_boundary_dimension_definition(key),
-                score=score,
-                tone=tone,
-                label=label,
-                summary=rubric_result.rationale,
-                observed=rubric_result.observed,
-                rubric_version=RUBRIC_VERSION,
-                evidence_met=rubric_result.met_labels,
-                evidence_missing=rubric_result.missing_labels,
-                major_concerns=rubric_result.major_concerns,
-                critical_breaches=rubric_result.critical_breaches,
-                evidence_quotes=rubric_result.evidence_quotes,
-                expected_move_label=rubric_result.expected_move_label,
-                outcome=rubric_result.outcome,
-                outcome_label=rubric_result.outcome_label,
-                process_steps=rubric_result.process_steps,
-        )
-        if judge_run is not None:
-            dimension = _judge_backed_dimension(judge_run, key, dimension)
-        dimensions.append(dimension)
-
-    dimension_order = {key: index for index, key in enumerate(display_keys)}
-    observed_dimensions = [item for item in dimensions if item.observed]
-    watchpoint = (
-        min(
-            observed_dimensions,
-            key=lambda item: (
-                item.score if item.score is not None else 99,
-                dimension_order.get(item.key, 99),
-            ),
-        )
-        if scenario_focus_key == "integrated" and observed_dimensions
-        else None
-    )
-    if scenario_focus_key == "integrated":
-        active = next(
-            (item for item in dimensions if item.observed and item.score is not None),
-            None,
-        )
-        focus_score = active.score if active else None
-        focus_name = scenario_framework["canonical_name"]
-        focus_definition = scenario_framework["definition"]
-        focus_cue = (
-            (
-                f"Current turn: {active.name}. {active.expected_move_label}."
-                if active and active.expected_move_label
-                else "PeerTrain will identify the boundary made relevant by the current turn."
-            )
-        )
-    else:
-        scenario_focus = next(
-            item for item in dimensions if item.key == scenario_focus_key
-        )
-        focus_score = scenario_focus.score
-        focus_name = scenario_focus.name
-        focus_definition = scenario_focus.definition
-        focus_cue = _boundary_dimension_cue(
-            scenario_focus.key,
-            scenario_focus.score,
-        )
-
-    return BoundaryMapIndicator(
-        dimensions=dimensions,
-        scenario_focus_key=scenario_focus_key,
-        scenario_focus_name=focus_name,
-        scenario_focus_definition=focus_definition,
-        scenario_focus_score=focus_score,
-        scenario_focus_cue=focus_cue,
-        watchpoint_key=watchpoint.key if watchpoint else "",
-        watchpoint_name=watchpoint.name if watchpoint else "",
-        watchpoint_definition=watchpoint.definition if watchpoint else "",
-        watchpoint_score=watchpoint.score if watchpoint else None,
-        watchpoint_cue=(
-            _boundary_dimension_cue(watchpoint.key, watchpoint.score)
-            if watchpoint
-            else ""
-        ),
-    )
-
-
 def build_boundary_status_indicator(session) -> BoundaryStatusIndicator:
     from training.models import TurnAssessment
     from training.templatetags.assessment_ui import assessment_status
@@ -1424,6 +457,191 @@ def _roleplay_system_prompt(session, prompt, user_message: str, *, opening=False
 
 def _roleplay_opening_system_prompt(session, prompt) -> str:
     return _roleplay_system_prompt(session, prompt, "", opening=True)
+
+
+def generate_demo_trainee_reply(session, quality: str) -> GeneratedTraineeReply:
+    provider = _provider()
+    response_source = Message.ResponseSources.OPENAI if provider == "openai" else Message.ResponseSources.GEMINI
+    normalized_quality = "unhelpful" if quality == "unhelpful" else "helpful"
+
+    try:
+        if provider == "google":
+            if not settings.GEMINI_API_KEY:
+                raise ValueError("GEMINI_API_KEY is not configured.")
+            trainee_text = _google_demo_trainee_reply(session, normalized_quality)
+        else:
+            if not settings.OPENAI_API_KEY:
+                raise ValueError("OPENAI_API_KEY is not configured.")
+            trainee_text = _openai_demo_trainee_reply(session, normalized_quality)
+        return GeneratedTraineeReply(
+            content=trainee_text,
+            response_source=response_source,
+        )
+    except Exception as exc:
+        raise RuntimeError('Development test reply generation failed. No template was substituted.') from exc
+
+
+def _generate_roleplay(session, user_message=None):
+    from training.services.assessment import checked_reply, lock_session
+    opening = user_message is None
+    token = session.processing_token
+    session.refresh_from_db()
+    if session.status != 'IN_PROGRESS' or session.processing_token != token:
+        raise PracticeFailure('SESSION_NOT_ACTIVE')
+    if opening:
+        existing = session.messages.filter(sender_type='AI').first()
+        if existing:
+            return existing
+    provider = _provider()
+    try:
+        prompt = get_prompt_for_type('ROLE_PLAY', scenario=session.scenario)
+        if provider == 'google':
+            candidate = _google_role_play_opening(session, prompt) if opening else _google_role_play_reply(session, prompt, user_message)
+        else:
+            candidate = _openai_role_play_opening(session, prompt) if opening else _openai_role_play_reply(session, prompt, user_message)
+        candidate = _strip_roleplay_framework_prefix(candidate)
+        if not candidate or _roleplay_quality_issue(session, candidate, user_message or ''):
+            raise ValueError('Invalid role-play output')
+    except Exception as exc:
+        session.processing_token = token
+        pause(session, 'OPENING_GENERATION_FAILED' if opening else 'ROLEPLAY_GENERATION_FAILED')
+        raise PracticeFailure(session.failure_category) from exc
+    try:
+        candidate, accepted = checked_reply(session, candidate)
+        if not accepted:
+            raise PracticeFailure('SAFETY_CHECK_FAILED')
+    except PracticeFailure as exc:
+        session.processing_token = token
+        pause(session, exc.category)
+        raise
+    with transaction.atomic():
+        lock_session(session)
+        session.refresh_from_db()
+        if session.status != 'IN_PROGRESS' or session.processing_token != token:
+            raise PracticeFailure('SESSION_NOT_ACTIVE')
+        if opening:
+            existing = session.messages.filter(sender_type='AI').first()
+            if existing:
+                return existing
+        message = Message.objects.create(session=session, sender_type='AI', content=candidate,
+            response_source=Message.ResponseSources.GEMINI if provider == 'google' else Message.ResponseSources.OPENAI)
+    return message
+
+
+def generate_ai_opening(session):
+    return _generate_roleplay(session)
+
+
+def generate_ai_reply(session, user_message):
+    return _generate_roleplay(session, user_message)
+
+
+def generate_feedback(session):
+    from training.services.assessment import saved_review
+    return saved_review(session)
+
+
+def _feedback_source_for_provider(provider: str) -> str:
+    return (
+        Feedback.GenerationSources.OPENAI
+        if provider == "openai"
+        else Feedback.GenerationSources.GEMINI
+    )
+
+
+def _live_feedback_available(provider: str | None = None) -> bool:
+    provider = provider or _provider()
+    if provider == "google":
+        return bool(settings.GEMINI_API_KEY)
+    return bool(settings.OPENAI_API_KEY)
+
+
+def get_prompt_for_type(prompt_type: str, scenario=None):
+    return SimpleNamespace(
+        **default_prompt_parts(prompt_type, scenario),
+        framework_version=CMCV_FRAMEWORK_VERSION,
+    )
+
+
+def _contains_internal_roleplay_leak(text: str) -> bool:
+    normalized = " ".join((text or "").lower().split())
+    return any(marker in normalized for marker in ROLEPLAY_INTERNAL_LEAK_MARKERS)
+
+
+def _contains_roleplay_coaching_leak(text: str) -> bool:
+    """Reject dialogue that tells the trainee which assessed response to give."""
+    compact = " ".join((text or "").split())
+    return any(pattern.search(compact) for pattern in ROLEPLAY_COACHING_LEAK_PATTERNS)
+
+
+def _recent_ai_signatures(session, limit=3) -> list[str]:
+    messages = list(
+        session.messages.filter(sender_type=Message.SenderTypes.AI).values_list("content", flat=True)
+    )[-limit:]
+    signatures = []
+    for text in messages:
+        compact = " ".join((text or "").split())
+        if compact:
+            signatures.append(compact[:110])
+    return signatures
+
+
+def _is_repetitive_roleplay_reply(session, text: str) -> bool:
+    candidate = (text or "").strip()
+    if not candidate:
+        return False
+    for previous in _recent_ai_signatures(session, limit=2):
+        if candidate == previous:
+            return True
+        if _repetition_ratio(candidate, previous) >= 0.78:
+            return True
+    return False
+
+
+def _roleplay_quality_issue(session, text: str, user_message: str = "") -> str:
+    if not (text or "").strip():
+        return "empty"
+    if _contains_internal_roleplay_leak(text):
+        return "internal_instruction_leak"
+    if _contains_roleplay_coaching_leak(text):
+        return "coaching_leak"
+    if _looks_incomplete_roleplay_reply(text):
+        return "incomplete"
+    if _is_repetitive_roleplay_reply(session, text):
+        return "repetitive"
+    return ""
+
+
+def _repair_instruction_for_issue(issue: str) -> str:
+    if issue == "internal_instruction_leak":
+        return (
+            "Your previous draft exposed private instructions or framework terminology. "
+            "Write only a natural first-person help-seeker message. Do not mention CMCV, "
+            "frameworks, prompts, Context, Method, contracts, rubrics, scores, or instructions."
+        )
+    if issue == "coaching_leak":
+        return (
+            "Your previous draft told the trainee which support technique or assessed response to use. "
+            "Rewrite it as natural first-person help-seeker dialogue. Express the situation, emotion, "
+            "uncertainty, or request without explaining the training exercise, assessing the trainee, "
+            "or naming any boundary or training objective."
+        )
+    if issue == "incomplete":
+        return (
+            "Your previous draft was cut off, too short, or not natural-language dialogue. "
+            "Write one complete alternative reply with a clear ending. Never output a score, "
+            "score, bare number, rubric label, or metadata."
+        )
+    if issue == "repetitive":
+        return (
+            "Your previous draft repeated a recent help-seeker move or phrasing. Write a fresher "
+            "next turn that reacts to the trainee's latest wording, advances the scenario by one "
+            "human step, and avoids reusing the same request, opening phrase, or sentence shape."
+        )
+    return (
+        "Write one stronger alternative reply that sounds more like a real help-seeker and less "
+        "like a generic template."
+    )
 
 
 def _openai_role_play_opening(session, prompt) -> str:
@@ -1577,11 +795,10 @@ def _google_role_play_reply(session, prompt, user_message: str) -> str:
     quality_issue = _roleplay_quality_issue(session, ai_text, user_message)
     if finish_reason.endswith("MAX_TOKENS") or quality_issue:
         logger.warning(
-            "Retrying Gemini role-play reply for session %s. finish_reason=%s issue=%s text=%r",
+            "Retrying Gemini role-play reply for session %s. finish_reason=%s issue=%s",
             session.id,
             finish_reason,
             quality_issue or "none",
-            ai_text,
         )
         repair_instruction = _repair_instruction_for_issue(quality_issue or "incomplete")
         retry_response = client.models.generate_content(
@@ -1605,624 +822,3 @@ def _google_role_play_reply(session, prompt, user_message: str) -> str:
     if not ai_text or _roleplay_quality_issue(session, ai_text, user_message):
         raise ValueError("Gemini returned an invalid role-play reply.")
     return ai_text
-
-
-def _placeholder_roleplay_reply(session, user_message: str = "") -> str:
-    variants = PLACEHOLDER_REPLY_VARIANTS.get(session.scenario.boundary_type) or [
-        PLACEHOLDER_REPLIES.get(
-            session.scenario.boundary_type,
-            (
-                "Thanks for sharing that. I'm still thinking about what you've said, "
-                "and I'd like to stay with the part that feels most important to you."
-            ),
-        )
-    ]
-    recent_ai = list(
-        session.messages.filter(sender_type=Message.SenderTypes.AI)
-        .values_list("content", flat=True)
-    )[-2:]
-    user_turn_count = session.messages.filter(sender_type=Message.SenderTypes.USER).count()
-    start_index = max(user_turn_count - 1, 0) % len(variants)
-    for offset in range(len(variants)):
-        candidate = variants[(start_index + offset) % len(variants)]
-        if candidate not in recent_ai:
-            return candidate
-    return variants[start_index]
-
-
-def _fallback_reason_for_exception(exc: Exception) -> str:
-    message = str(exc or "")
-    lowered = message.lower()
-    if (
-        "resource_exhausted" in lowered
-        or "quota exceeded" in lowered
-        or "insufficient_quota" in lowered
-        or "rate limit" in lowered
-        or "429" in lowered
-    ):
-        return "quota_exhausted"
-    if (
-        "api key" in lowered
-        or "not configured" in lowered
-        or "permission denied" in lowered
-        or "authentication" in lowered
-        or "unauthorized" in lowered
-    ):
-        return "configuration"
-    if "connecterror" in lowered or "timed out" in lowered or "timeout" in lowered:
-        return "network"
-    return "unknown"
-
-
-def _fallback_notice_text(reason: str, provider: str, exc: Exception) -> str:
-    provider_label = _provider_label(provider)
-    if reason == "quota_exhausted":
-        retry_match = re.search(r"retry in ([0-9]+(?:\.[0-9]+)?)s", str(exc or ""), re.IGNORECASE)
-        if retry_match:
-            retry_seconds = int(float(retry_match.group(1)))
-            return (
-                f"{provider_label} quota, billing access, or rate limits blocked this request, "
-                "so this turn used a placeholder reply. "
-                f"Suggested retry window: about {retry_seconds} seconds."
-            )
-        return (
-            f"{provider_label} quota, billing access, or rate limits blocked this request, "
-            "so this turn used a placeholder reply."
-        )
-    if reason == "configuration":
-        return (
-            f"{provider_label} is not configured correctly right now, "
-            "so this turn used a placeholder reply."
-        )
-    if reason == "network":
-        return (
-            f"{provider_label} could not be reached from the current network, "
-            "so this turn used a placeholder reply."
-        )
-    return (
-        "This turn used a placeholder help-seeker reply because the "
-        f"{provider_label} request failed."
-    )
-
-
-def generate_demo_trainee_reply(session, quality: str) -> GeneratedTraineeReply:
-    provider = _provider()
-    response_source = Message.ResponseSources.OPENAI if provider == "openai" else Message.ResponseSources.GEMINI
-    normalized_quality = "unhelpful" if quality == "unhelpful" else "helpful"
-
-    try:
-        if provider == "google":
-            if not settings.GEMINI_API_KEY:
-                raise ValueError("GEMINI_API_KEY is not configured.")
-            trainee_text = _google_demo_trainee_reply(session, normalized_quality)
-        else:
-            if not settings.OPENAI_API_KEY:
-                raise ValueError("OPENAI_API_KEY is not configured.")
-            trainee_text = _openai_demo_trainee_reply(session, normalized_quality)
-        return GeneratedTraineeReply(
-            content=trainee_text,
-            response_source=response_source,
-        )
-    except Exception as exc:
-        fallback_reason = _fallback_reason_for_exception(exc)
-        fallback_notice = _demo_trainee_fallback_notice_text(fallback_reason, provider, exc)
-        logger.exception(
-            "Falling back to template trainee quick reply for session %s using provider %s.",
-            session.id,
-            provider,
-        )
-        return GeneratedTraineeReply(
-            content=_template_demo_trainee_reply(session, normalized_quality),
-            response_source=Message.ResponseSources.PLACEHOLDER,
-            used_fallback=True,
-            fallback_reason=fallback_reason,
-            fallback_notice=fallback_notice,
-        )
-
-
-def generate_ai_opening(session):
-    session = TrainingSession.objects.select_related("scenario").get(pk=session.pk)
-    if session.scenario.boundary_type not in {"AGENCY", "RELATIONSHIP", "SAFETY"}:
-        raise ValueError("This scenario is not available for practice.")
-    if not session.persona:
-        TrainingSession.objects.filter(pk=session.pk, persona="").update(persona="pso")
-        session.refresh_from_db()
-    existing_opening = (
-        session.messages.filter(sender_type=Message.SenderTypes.AI)
-        .order_by("created_at", "id")
-        .first()
-    )
-    if existing_opening:
-        existing_opening.used_fallback = (
-            existing_opening.response_source == Message.ResponseSources.PLACEHOLDER
-        )
-        existing_opening.fallback_notice = (
-            "This opening uses a backup reply because the original live response was unavailable."
-            if existing_opening.used_fallback
-            else ""
-        )
-        return existing_opening
-
-    prompt = get_prompt_for_type(
-        'ROLE_PLAY',
-        scenario=session.scenario,
-    )
-    provider = _provider()
-    response_source = (
-        Message.ResponseSources.OPENAI
-        if provider == "openai"
-        else Message.ResponseSources.GEMINI
-    )
-    used_fallback = False
-    fallback_reason = ""
-    fallback_notice = ""
-
-    try:
-        if provider == "google":
-            if not settings.GEMINI_API_KEY:
-                raise ValueError("GEMINI_API_KEY is not configured.")
-            opening_text = _google_role_play_opening(session, prompt)
-        else:
-            if not settings.OPENAI_API_KEY:
-                raise ValueError("OPENAI_API_KEY is not configured.")
-            opening_text = _openai_role_play_opening(session, prompt)
-    except Exception as exc:
-        fallback_reason = _fallback_reason_for_exception(exc)
-        fallback_notice = _fallback_notice_text(fallback_reason, provider, exc)
-        logger.exception(
-            "Falling back to placeholder role-play opening for session %s using provider %s.",
-            session.id,
-            provider,
-        )
-        opening_text = opening_message_for(session.scenario.boundary_type, session.persona)
-        used_fallback = True
-        response_source = Message.ResponseSources.PLACEHOLDER
-
-    opening_text = _strip_roleplay_framework_prefix(opening_text)
-    if not opening_text:
-        opening_text = opening_message_for(session.scenario.boundary_type, session.persona)
-        used_fallback = True
-        response_source = Message.ResponseSources.PLACEHOLDER
-
-    from training.services.assessment import checked_reply
-    opening_text, accepted = checked_reply(session, opening_text)
-    if not accepted:
-        used_fallback = True
-        response_source = Message.ResponseSources.PLACEHOLDER
-        fallback_notice = "The simulated reply could not be verified. A safe pause is shown."
-
-    # Serialize the final save, including on SQLite, without holding a lock during the LLM call.
-    with transaction.atomic():
-        TrainingSession.objects.filter(pk=session.pk).update(persona=F("persona"))
-        existing_opening = (
-            session.messages.filter(sender_type=Message.SenderTypes.AI)
-            .order_by("created_at", "id")
-            .first()
-        )
-        if existing_opening:
-            existing_opening.used_fallback = (
-                existing_opening.response_source == Message.ResponseSources.PLACEHOLDER
-            )
-            existing_opening.fallback_notice = (
-                "This opening uses a backup reply because the original live response was unavailable."
-                if existing_opening.used_fallback
-                else ""
-            )
-            return existing_opening
-
-        message = Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content=opening_text,
-            response_source=response_source,
-        )
-    message.used_fallback = used_fallback
-    message.fallback_reason = fallback_reason
-    message.fallback_notice = fallback_notice
-    return message
-
-
-def generate_ai_reply(session, user_message):
-    if not session.persona:
-        TrainingSession.objects.filter(pk=session.pk, persona="").update(persona="pso")
-        session.refresh_from_db()
-    prompt = get_prompt_for_type('ROLE_PLAY', scenario=session.scenario)
-    used_fallback = False
-    fallback_reason = ""
-    fallback_notice = ""
-    provider = _provider()
-    response_source = Message.ResponseSources.OPENAI if provider == "openai" else Message.ResponseSources.GEMINI
-
-    try:
-        if provider == "google":
-            if not settings.GEMINI_API_KEY:
-                raise ValueError("GEMINI_API_KEY is not configured.")
-            ai_text = _google_role_play_reply(session, prompt, user_message)
-        else:
-            if not settings.OPENAI_API_KEY:
-                raise ValueError("OPENAI_API_KEY is not configured.")
-            ai_text = _openai_role_play_reply(session, prompt, user_message)
-    except Exception as exc:
-        fallback_reason = _fallback_reason_for_exception(exc)
-        fallback_notice = _fallback_notice_text(fallback_reason, provider, exc)
-        logger.exception(
-            "Falling back to placeholder role-play reply for session %s using provider %s.",
-            session.id,
-            provider,
-        )
-        ai_text = _placeholder_roleplay_reply(session, user_message)
-        used_fallback = True
-        response_source = Message.ResponseSources.PLACEHOLDER
-
-    ai_text = _strip_roleplay_framework_prefix(ai_text)
-    if not ai_text:
-        ai_text = _placeholder_roleplay_reply(session, user_message)
-        used_fallback = True
-        response_source = Message.ResponseSources.PLACEHOLDER
-
-    from training.services.assessment import checked_reply
-    ai_text, accepted = checked_reply(session, ai_text)
-    if not accepted:
-        used_fallback = True
-        response_source = Message.ResponseSources.PLACEHOLDER
-        fallback_notice = "The simulated reply could not be verified. A safe pause is shown."
-    message = Message.objects.create(
-        session=session,
-        sender_type=Message.SenderTypes.AI,
-        content=ai_text,
-        response_source=response_source,
-    )
-    message.used_fallback = used_fallback
-    message.fallback_reason = fallback_reason
-    message.fallback_notice = fallback_notice
-    return message
-
-
-def _parsed_openai_payload(response: Any) -> FeedbackPayload:
-    payload = getattr(response, "output_parsed", None)
-    if payload:
-        return payload
-    raise ValueError("Structured feedback response could not be parsed.")
-
-
-def _parsed_google_payload(response: Any) -> FeedbackPayload:
-    payload = getattr(response, "parsed", None)
-    if isinstance(payload, FeedbackPayload):
-        return payload
-    if payload:
-        return FeedbackPayload.model_validate(payload)
-
-    response_text = (getattr(response, "text", "") or "").strip()
-    if response_text:
-        return FeedbackPayload.model_validate_json(response_text)
-    raise ValueError("Structured Gemini feedback response could not be parsed.")
-
-
-def _effective_review_items(
-    session,
-    payload: FeedbackPayload,
-    generation_source: str,
-) -> tuple[list[FeedbackReviewItemPayload], str]:
-    if payload.review_items:
-        return payload.review_items, generation_source
-    return _placeholder_review_items(session), Feedback.GenerationSources.PLACEHOLDER
-
-
-def _review_required_boundary_keys(
-    session,
-    boundary_scores,
-    review_items,
-    *,
-    source=None,
-):
-    """Flag evidence-chain conflicts without converting notebook text into a score."""
-
-    unobserved_keys = {
-        item.boundary_key.strip().upper()
-        for item in boundary_scores
-        if not item.observed
-    }
-    if not unobserved_keys:
-        return set()
-
-    trainee_turn_count = session.messages.filter(
-        sender_type=Message.SenderTypes.USER
-    ).count()
-    conflicts = set()
-    for item in review_items:
-        item_source = source or getattr(
-            item,
-            "source",
-            Feedback.GenerationSources.PLACEHOLDER,
-        )
-        if item_source == Feedback.GenerationSources.PLACEHOLDER:
-            continue
-        turn_number = getattr(
-            item,
-            "trainee_turn_number",
-            getattr(item, "turn_index", 0),
-        )
-        boundary_key = (getattr(item, "boundary_key", "") or "").strip().upper()
-        if (
-            1 <= turn_number <= trainee_turn_count
-            and boundary_key in unobserved_keys
-        ):
-            conflicts.add(boundary_key)
-    return conflicts
-
-
-def _evidence_search_text(text: str) -> str:
-    normalized = unicodedata.normalize("NFKC", text or "").casefold()
-    normalized = normalized.translate(
-        str.maketrans(
-            {
-                "\u2018": "'",
-                "\u2019": "'",
-                "\u201c": '"',
-                "\u201d": '"',
-            }
-        )
-    )
-    return re.sub(r"[^\w]+", " ", normalized).strip()
-
-
-def _evidence_candidates(evidence: str) -> list[str]:
-    raw = re.sub(r"\s+", " ", evidence or "").strip()
-    if not raw:
-        return []
-
-    candidates = [raw]
-    without_turn_label = re.sub(
-        r"^(?:trainee|supporter|user)(?:\s+turn)?\s*\d*\s*:\s*",
-        "",
-        raw,
-        flags=re.IGNORECASE,
-    ).strip()
-    candidates.append(without_turn_label)
-    candidates.extend(
-        match.strip()
-        for match in re.findall(r'["\u201c\u201d]([^"\u201c\u201d]+)["\u201c\u201d]', raw)
-    )
-
-    unique = []
-    for candidate in candidates:
-        cleaned = candidate.strip(" \t\r\n\"'\u2018\u2019\u201c\u201d")
-        if len(_evidence_search_text(cleaned)) >= 12 and cleaned not in unique:
-            unique.append(cleaned)
-    return unique
-
-
-def _verified_trainee_evidence(evidence: str, trainee_messages: list[str]) -> str:
-    searchable_messages = [
-        _evidence_search_text(message)
-        for message in trainee_messages
-        if _evidence_search_text(message)
-    ]
-    for candidate in _evidence_candidates(evidence):
-        searchable_candidate = _evidence_search_text(candidate)
-        if any(
-            searchable_candidate in message or message in searchable_candidate
-            for message in searchable_messages
-        ):
-            return candidate
-    return ""
-
-
-def _calibrate_feedback_payload(
-    session,
-    payload: FeedbackPayload,
-    *,
-    allow_judge=True,
-) -> FeedbackPayload:
-    """Merge coaching text with reliability-gated boundary scores."""
-
-    calibrated = payload.model_copy(deep=True)
-    model_by_key = {}
-    for score in calibrated.boundary_scores:
-        key = score.boundary_key.strip().upper()
-        if key not in {item.upper() for item in BOUNDARY_DIMENSION_ORDER}:
-            continue
-        model_by_key.setdefault(key, score)
-
-    assessments = (
-        final_feedback_assessments(session)
-        if allow_judge
-        else deterministic_feedback_assessments(session)
-    )
-    protected_scores = []
-    for key in BOUNDARY_DIMENSION_ORDER:
-        assessment = assessments[key]
-        model_score = model_by_key.get(key.upper())
-        next_move = model_score.next_move.strip() if model_score else ""
-        if assessment.observed and not next_move:
-            next_move = (
-                f"Practise the next relevant move for {key.title()} Boundary "
-                "without repeating moves that are not needed in that turn."
-            )
-        protected_scores.append(
-            BoundaryScorePayload(
-                boundary_key=key.upper(),
-                observed=assessment.observed,
-                score=assessment.score,
-                evidence=_session_evidence_text(assessment),
-                rationale=assessment.rationale,
-                next_move=next_move,
-            )
-        )
-
-    calibrated.boundary_scores = protected_scores
-    calibrated.what_worked = calibrated.what_worked[:2]
-    calibrated.next_boundary_moves = calibrated.next_boundary_moves[:2]
-    return calibrated
-
-
-def _replace_feedback_scores(
-    feedback,
-    payload: FeedbackPayload,
-    *,
-    session,
-    allow_judge=True,
-    review_required_keys=None,
-):
-    feedback.scores.all().delete()
-    judge_run = _final_feedback_judge_run(session) if allow_judge else None
-    review_required_keys = set(review_required_keys or ())
-    criteria = {
-        "AGENCY": FeedbackScore.Criteria.AGENCY,
-        "RELATIONSHIP": FeedbackScore.Criteria.RELATIONSHIP,
-        "SAFETY": FeedbackScore.Criteria.SAFETY,
-    }
-    for item in payload.boundary_scores:
-        review_required = (
-            not item.observed and item.boundary_key in review_required_keys
-        )
-        judge_decision = (
-            judge_run.resolution_details.get(item.boundary_key, {}).get("decision")
-            if judge_run is not None
-            else ""
-        )
-        FeedbackScore.objects.create(
-            feedback=feedback,
-            criterion=criteria[item.boundary_key],
-            score=item.score,
-            observed=item.observed,
-            review_required=review_required,
-            evidence=item.evidence,
-            rationale=(
-                REVIEW_REQUIRED_RATIONALE
-                if review_required
-                else item.rationale
-            ),
-            next_move=item.next_move,
-            rubric_version=(
-                judge_run.rubric_version
-                if judge_decision in JUDGE_ACCEPTED_DECISIONS
-                else RUBRIC_VERSION
-            ),
-        )
-
-
-def _apply_feedback_payload(
-    feedback,
-    session,
-    prompt,
-    payload: FeedbackPayload,
-    generation_source: str,
-    *,
-    allow_judge=True,
-):
-    calibrated_payload = _calibrate_feedback_payload(
-        session,
-        payload,
-        allow_judge=allow_judge,
-    )
-    review_items, review_source = _effective_review_items(
-        session,
-        calibrated_payload,
-        generation_source,
-    )
-    review_required_keys = _review_required_boundary_keys(
-        session,
-        calibrated_payload.boundary_scores,
-        review_items,
-        source=review_source,
-    )
-    observed_scores = [
-        item.score
-        for item in calibrated_payload.boundary_scores
-        if item.observed and item.score is not None
-    ]
-    overall_score = conservative_median_score(observed_scores)
-
-    judge_run = _final_feedback_judge_run(session) if allow_judge else None
-    uses_judge = bool(
-        judge_run
-        and any(
-            detail.get("decision") in JUDGE_ACCEPTED_DECISIONS
-            for detail in judge_run.resolution_details.values()
-        )
-    )
-    scoring_version = PRODUCTION_SCORING_VERSION if uses_judge else RUBRIC_VERSION
-
-    feedback.overall_score = overall_score
-    feedback.strengths = "\n".join(calibrated_payload.what_worked)
-    feedback.improvements = "\n".join(calibrated_payload.next_boundary_moves)
-    feedback.generation_source = generation_source
-    feedback.rubric_version = scoring_version
-    feedback.save(
-        update_fields=[
-            "overall_score",
-            "strengths",
-            "improvements",
-            "generation_source",
-            "rubric_version",
-        ]
-    )
-
-    _replace_feedback_scores(
-        feedback,
-        calibrated_payload,
-        session=session,
-        allow_judge=allow_judge,
-        review_required_keys=review_required_keys,
-    )
-
-    feedback.review_items.all().delete()
-    _save_feedback_review_items(
-        feedback,
-        session,
-        review_items,
-        source=review_source,
-    )
-
-    session.overall_score = overall_score
-    session.rubric_version = scoring_version
-    session.save(update_fields=["overall_score", "rubric_version"])
-    return feedback
-
-
-def regrade_feedback_deterministically(feedback):
-    """Rebuild protected scores from the transcript without calling an LLM."""
-
-    session = feedback.session
-    payload = FeedbackPayload(
-        boundary_scores=[],
-        what_worked=feedback.strength_list,
-        next_boundary_moves=feedback.improvement_list,
-        review_items=[],
-    )
-    calibrated = _calibrate_feedback_payload(
-        session,
-        payload,
-        allow_judge=False,
-    )
-    observed_scores = [
-        item.score
-        for item in calibrated.boundary_scores
-        if item.observed and item.score is not None
-    ]
-    overall_score = conservative_median_score(observed_scores)
-    _replace_feedback_scores(
-        feedback,
-        calibrated,
-        session=session,
-        allow_judge=False,
-        review_required_keys=_review_required_boundary_keys(
-            session,
-            calibrated.boundary_scores,
-            list(feedback.review_items.all()),
-        ),
-    )
-
-    feedback.overall_score = overall_score
-    feedback.rubric_version = RUBRIC_VERSION
-    feedback.save(update_fields=["overall_score", "rubric_version"])
-    session.overall_score = overall_score
-    session.rubric_version = RUBRIC_VERSION
-    session.save(update_fields=["overall_score", "rubric_version"])
-    return feedback
-
-
-def generate_feedback(session):
-    from training.services.assessment import saved_review
-    return saved_review(session)

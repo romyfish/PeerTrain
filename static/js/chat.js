@@ -36,6 +36,7 @@
 
   let currentUserTurns = Number(app.dataset.userTurns) || 0;
   let currentBoundaryScore = Number(app.dataset.boundaryScore) || 0;
+  let practicePaused = app.dataset.practicePaused === "true";
   let canSend = app.dataset.canSend === "true";
   let needsOpening = app.dataset.needsOpening === "true";
   let requestPending = false;
@@ -82,7 +83,7 @@
   const showError = (message, { retryOpening = false, showReload = true } = {}) => {
     if (!errorBox || !errorText) return;
     errorText.textContent = message;
-    if (retryOpeningButton) retryOpeningButton.hidden = !retryOpening;
+    if (retryOpeningButton) retryOpeningButton.hidden = practicePaused || !retryOpening;
     if (reloadConversationLink) reloadConversationLink.hidden = !showReload;
     errorBox.hidden = false;
   };
@@ -107,7 +108,7 @@
     if (composer) composer.disabled = disabled;
     if (sendButton) sendButton.disabled = disabled;
     if (testRepliesToggle) testRepliesToggle.disabled = disabled;
-    if (finishButton) finishButton.disabled = busy;
+    if (finishButton) finishButton.disabled = busy || practicePaused || app.dataset.practicePending === "true";
     actionButtons.forEach((button) => {
       button.disabled = disabled;
     });
@@ -344,6 +345,14 @@
       );
     }
 
+    if (payload.code === 'session_paused') {
+      practicePaused = true;
+      needsOpening = false;
+      canSend = false;
+      app.dataset.practicePaused = 'true';
+      if (payload.transcript_html) chatLog.innerHTML = payload.transcript_html;
+      setControlsDisabled(false);
+    }
     if (!response.ok || !payload.ok) {
       if (payload.can_send === false) canSend = false;
       throw chatRequestError(
@@ -505,6 +514,7 @@
 
     const submitter = event.submitter || sendButton;
     const action = submitter?.value || "send";
+    if (practicePaused) return;
     if (action === "finish") {
       if (currentUserTurns < 1) return;
       if (
@@ -571,7 +581,20 @@
     autoResizeComposer();
   }
 
+  let feedbackEventQueue = Promise.resolve();
+  const logFeedbackToggle = (collapsed) => {
+    const data = new FormData();
+    data.set('csrfmiddlewaretoken', chatForm.querySelector('[name=csrfmiddlewaretoken]').value);
+    data.set('event_type', collapsed ? 'CLOSE' : 'OPEN');
+    data.set('trainee_turn_number', String(currentUserTurns));
+    // Serialize click requests so server timestamps follow interaction order.
+    feedbackEventQueue = feedbackEventQueue.catch(() => {}).then(() => fetch(app.dataset.feedbackEventUrl, {
+      method: 'POST', body: data, credentials: 'same-origin', keepalive: true,
+    }));
+  };
+
   boundaryCoachMobileTrigger?.addEventListener("click", () => {
+    logFeedbackToggle(!boundaryCoachCollapsed);
     setDesktopBoundaryCoachCollapsed(!boundaryCoachCollapsed);
   });
   retryOpeningButton?.addEventListener("click", startRoleplay);
@@ -588,6 +611,7 @@
     boundaryCoachToggles.forEach((toggle) => {
       toggle.addEventListener("click", () => {
         const shouldCollapse = !boundaryCoach.classList.contains("is-collapsed");
+        logFeedbackToggle(shouldCollapse);
         setDesktopBoundaryCoachCollapsed(shouldCollapse, { moveFocus: true });
       });
     });

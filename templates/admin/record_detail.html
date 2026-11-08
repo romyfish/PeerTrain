@@ -1,0 +1,26 @@
+{% extends "base_app.html" %}
+{% block content %}
+<h1>Session {{ session.id }} — {{ session.user.full_name_or_email }}</h1>
+<p>{{ session.scenario.display_title }} · {{ session.get_persona_display }} · {{ session.start_time|date:"Y-m-d H:i:s T" }} · {{ session.get_status_display }}</p>
+{% if session.failure_category %}<p>Internal failure category: {{ session.failure_category }} · Paused at {{ session.paused_at|date:"Y-m-d H:i:s T" }}</p>{% endif %}
+{% if session.review_attention_at %}<p>Session Review requires researcher attention since {{ session.review_attention_at|date:"Y-m-d H:i:s T" }}.</p>{% endif %}
+{% if session.reflection_attention_at %}<p>Reflection AI requires researcher attention since {{ session.reflection_attention_at|date:"Y-m-d H:i:s T" }}.</p>{% endif %}
+<section class="card p-3 mb-3"><h2>Session management</h2>
+<p>Recovery retries the pending assessment or help-seeker reply using the accepted trainee message. It does not add a trainee turn. Investigate the failure before resuming.</p>
+<form method="post">{% csrf_token %}<label><input type="checkbox" name="confirm" value="{{ session.id }}" required> I have inspected the record and confirm this action.</label>
+{% if session.status == 'PAUSED' %}<button name="action" value="resume" class="btn btn-outline-primary">Resume / recover pending turn</button><button name="action" value="interrupt" class="btn btn-outline-danger">End as interrupted</button>{% endif %}
+{% if session.processing %}<button name="action" value="pause_pending" class="btn btn-outline-warning">Suspend a stuck request</button>{% endif %}
+{% if session.review_attention_at %}<button name="action" value="retry_review" class="btn btn-outline-primary">Retry Session Review</button>{% endif %}
+{% if session.reflection_attention_at %}<button name="action" value="retry_reflection" class="btn btn-outline-primary">Retry pending Reflection AI message</button>{% endif %}
+</form></section>
+<section class="card p-3 mb-3"><h2>Conversation and interaction timing</h2>
+{% for entry in timeline %}<article class="border-bottom py-3" {% if entry.message %}id="message-{{ entry.message.id }}"{% endif %}>
+<p><time>{{ entry.at|date:"Y-m-d H:i:s.u T" }}</time> — {{ entry.kind }}</p>
+{% if entry.message %}<p>{{ entry.message.content|linebreaksbr }}</p>
+{% with assessment=entry.message.assessment %}{% if assessment %}<details><summary>Saved per-turn assessment</summary><p>{{ assessment.feedback_text|linebreaksbr }}</p><pre class="text-wrap">{{ assessment.record }}</pre><p>Status level: {{ assessment.overall_status_level }} · Succeeded: {{ assessment.succeeded }}</p><p>Private role-play cue: {{ assessment.roleplay_cue }}</p></details>{% endif %}{% endwith %}
+{% else %}<p>{{ entry.event.event_type }} · trainee turn {{ entry.event.trainee_turn_number }}{% if entry.event.latest_message_id %} · <a href="#message-{{ entry.event.latest_message_id }}">Message {{ entry.event.latest_message_id }}</a>{% endif %}</p>{% endif %}</article>{% endfor %}</section>
+<section class="card p-3 mb-3"><h2>Saved Session Review</h2>{% if feedback %}<p>{{ feedback.overview|linebreaksbr }}</p><h3>What worked</h3><p>{{ feedback.strengths|linebreaksbr }}</p><h3>Areas for consideration</h3><p>{{ feedback.improvements|linebreaksbr }}</p><h3>Saved alternatives</h3>{% for item in feedback.review_items.all %}<p>Turn {{ item.turn_index }} · {{ item.message_excerpt }}</p><p>{{ item.why_it_matters }}</p><blockquote>{{ item.better_reply }}</blockquote>{% endfor %}{% else %}<p>No saved synthesis.</p>{% endif %}</section>
+<section class="card p-3 mb-3"><h2>Reflection AI conversation</h2>{% for message in session.reflection_messages.all %}<p>{{ message.created_at|date:"Y-m-d H:i:s.u T" }} · {{ message.sender_type }}</p><p>{{ message.content|linebreaksbr }}</p>{% empty %}<p>No messages.</p>{% endfor %}<h2>My notes</h2><p>{{ reflection.reflection_text|linebreaksbr }}</p></section>
+<section class="card p-3 mb-3"><h2>Safety checks</h2>{% for check in session.safety_checks.all %}<p>{{ check.created_at|date:"Y-m-d H:i:s.u T" }} · {{ check.verdict }} · {{ check.reason_codes }}</p>{% endfor %}</section>
+<section class="card p-3"><h2>Failure and recovery history</h2>{% for event in session.management_events.all %}<p>{{ event.created_at|date:"Y-m-d H:i:s.u T" }} · {{ event.action }} · {{ event.category }} · {{ event.actor.full_name_or_email|default:"System" }}</p>{% endfor %}</section>
+{% endblock %}

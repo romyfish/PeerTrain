@@ -68,12 +68,11 @@ class SessionUpdateTests(TestCase):
                     for forbidden in ('feedback_mode', 'sidebar', 'visibility', 'terminal', 'concurrent', 'combined'):
                         self.assertNotIn(forbidden, context)
 
-    def test_assessment_failure_is_saved_without_failing_grade(self):
+    def test_assessment_failure_creates_no_assessment(self):
         with patch.object(tasks, 'task_call', side_effect=ValueError('invalid')):
-            row = tasks.assess_turn(self.session, self.message())
-        self.assertFalse(row.succeeded)
-        self.assertEqual(row.overall_status_level, 0)
-        self.assertEqual(row.feedback_type, 'none')
+            with self.assertRaises(tasks.PracticeFailure):
+                tasks.assess_turn(self.session, self.message())
+        self.assertFalse(TurnAssessment.objects.exists())
 
     def test_assessment_stops_at_trainee_message(self):
         message = self.message()
@@ -113,19 +112,19 @@ class SessionUpdateTests(TestCase):
                  [self.verdict('REWRITE', 'Replacement'), self.verdict('REWRITE', 'Another')]]
         for outputs in cases:
             with self.subTest(outputs=outputs), patch.object(tasks, 'task_call', side_effect=outputs):
-                self.assertEqual(tasks.checked_reply(self.session, 'Unchecked'), (tasks.SAFE_FALLBACK, False))
+                with self.assertRaises(tasks.PracticeFailure):
+                    tasks.checked_reply(self.session, 'Unchecked')
 
     def test_opening_and_reply_are_checked_before_saving(self):
         with override_settings(OPENAI_API_KEY='test-placeholder'), patch('training.services.ai._openai_role_play_opening', return_value='Unchecked opening'), patch.object(tasks, 'task_call', return_value=self.verdict('BLOCK')):
-            opening = generate_ai_opening(self.session)
-        self.assertEqual(opening.content, tasks.SAFE_FALLBACK)
-        with override_settings(OPENAI_API_KEY='test-placeholder'), patch('training.services.ai._openai_role_play_reply', return_value='Unchecked reply'), patch.object(tasks, 'task_call', return_value=self.verdict('BLOCK')):
-            reply = generate_ai_reply(self.session, 'Hello')
-        self.assertEqual(reply.content, tasks.SAFE_FALLBACK)
-        self.assertFalse(self.session.messages.filter(content__contains='Unchecked').exists())
+            with self.assertRaises(tasks.PracticeFailure):
+                generate_ai_opening(self.session)
+        self.session.refresh_from_db()
+        self.assertEqual(self.session.status, 'PAUSED')
+        self.assertFalse(self.session.messages.exists())
 
     def test_rewrite_is_saved_as_only_accepted_reply(self):
-        with override_settings(OPENAI_API_KEY='test-placeholder'), patch('training.services.ai._openai_role_play_reply', return_value='Candidate'), patch.object(tasks, 'task_call', side_effect=[self.verdict('REWRITE', 'I am uncertain.'), self.verdict()]):
+        with override_settings(OPENAI_API_KEY='test-placeholder'), patch('training.services.ai._openai_role_play_reply', return_value='I feel uncertain about where to begin.'), patch.object(tasks, 'task_call', side_effect=[self.verdict('REWRITE', 'I am uncertain.'), self.verdict()]):
             reply = generate_ai_reply(self.session, 'Hello')
         self.assertEqual(reply.content, 'I am uncertain.')
         self.assertEqual(self.session.messages.count(), 1)
@@ -273,16 +272,17 @@ class SessionUpdateTests(TestCase):
         feedback.refresh_from_db()
         self.assertEqual(feedback.strengths, 'Agency was supported.')
 
-    def test_reflection_failures_preserve_user_message_and_allow_retry(self):
+    def test_reflection_failures_preserve_user_message_and_require_researcher(self):
         self.complete()
         self.client.get(self.url)
         data = {'action': 'reflect', 'content': 'Help me reflect', 'request_id': str(uuid.uuid4())}
         with patch.object(tasks, 'task_call', side_effect=ValueError('provider failure')):
             self.assertEqual(self.client.post(self.url, data, **self.headers).status_code, 503)
         self.assertEqual(self.session.reflection_messages.filter(sender_type='USER').count(), 1)
-        with patch.object(tasks, 'task_call', return_value=tasks.ReflectionResult(reply='Where would you like to start?')):
-            self.assertEqual(self.client.post(self.url, data, **self.headers).status_code, 200)
-        self.assertEqual(self.session.reflection_messages.count(), 3)
+        with patch.object(tasks, 'task_call') as call:
+            self.assertEqual(self.client.post(self.url, data, **self.headers).status_code, 503)
+            call.assert_not_called()
+        self.assertEqual(self.session.reflection_messages.count(), 2)
 
     def test_reflection_excludes_private_cues_and_case_background(self):
         message = self.message()
@@ -446,4 +446,5 @@ class SessionUpdateTests(TestCase):
         self.assertIn('I feel low.', captured['contents'])
         bad_client = SimpleNamespace(models=SimpleNamespace(generate_content=lambda **kwargs: SimpleNamespace(text='invalid JSON')))
         with override_settings(LLM_PROVIDER='google', GEMINI_API_KEY='test-placeholder'), patch('training.services.ai._google_client', return_value=bad_client):
-            self.assertEqual(tasks.checked_reply(self.session, 'Unchecked'), (tasks.SAFE_FALLBACK, False))
+            with self.assertRaises(tasks.PracticeFailure):
+                tasks.checked_reply(self.session, 'Unchecked')

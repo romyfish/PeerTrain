@@ -12,6 +12,9 @@
 {% block content %}
 <div
   class="peertrain-chat-app peertrain-scenario-shell {{ scenario_meta.theme_class|default:'scenario-theme-default' }}"
+  data-practice-pending="{{ practice_pending|yesno:'true,false' }}"
+  data-practice-paused="{{ practice_paused|yesno:'true,false' }}"
+  data-feedback-event-url="{% url 'live_feedback_event' session.id %}"
   data-chat-app
   data-chat-url="{% url 'chat' session.id %}"
   data-session-id="{{ session.id }}"
@@ -22,6 +25,7 @@
   data-can-send="{{ can_send|yesno:'true,false' }}"
   data-needs-opening="{{ needs_roleplay_opening|yesno:'true,false' }}"
 >
+  {% if practice_paused %}<div class="alert alert-warning" role="alert"><strong>Practice temporarily paused</strong><p>PeerTrain couldn't continue this session reliably. Your progress has been saved. Please contact the researcher before continuing.</p></div>{% endif %}
   <div class="peertrain-chat-layout" data-boundary-coach-layout>
     <aside class="peertrain-guidance-sidebar" data-guidance-sidebar>
       <div class="peertrain-guidance-rail" data-guidance-rail aria-hidden="true">
@@ -124,7 +128,7 @@
                 <div class="dropup">
                   <button
                     type="button"
-                    class="peertrain-test-replies-toggle dropdown-toggle"
+                    class="peertrain-test-replies-toggle dropdown-toggle" {% if not can_send %}disabled{% endif %}
                     data-bs-toggle="dropdown"
                     aria-expanded="false"
                   >
@@ -133,10 +137,10 @@
                   <div class="dropdown-menu peertrain-test-replies-menu">
                     <div class="peertrain-test-replies-heading">Quick Test Replies</div>
                     <div class="peertrain-test-replies-copy">Alex Chen demo account only.</div>
-                    <button type="submit" name="action" value="auto_helpful" formnovalidate class="dropdown-item peertrain-test-reply-good" data-chat-action="auto_helpful">
+                    <button type="submit" name="action" value="auto_helpful" formnovalidate class="dropdown-item peertrain-test-reply-good" data-chat-action="auto_helpful" {% if not can_send %}disabled{% endif %}>
                       Auto Better Reply
                     </button>
-                    <button type="submit" name="action" value="auto_unhelpful" formnovalidate class="dropdown-item peertrain-test-reply-poor" data-chat-action="auto_unhelpful">
+                    <button type="submit" name="action" value="auto_unhelpful" formnovalidate class="dropdown-item peertrain-test-reply-poor" data-chat-action="auto_unhelpful" {% if not can_send %}disabled{% endif %}>
                       Auto Poor Reply
                     </button>
                   </div>
@@ -150,13 +154,13 @@
                 value="finish"
                 formnovalidate
                 class="peertrain-chat-finish"
-                data-chat-finish
+                data-chat-finish {% if practice_paused or practice_pending %}disabled{% endif %}
                 {% if user_turns < 1 %}hidden{% endif %}
                 {% if user_turns < 4 %}data-confirm-early="true"{% endif %}
               >
                 <span data-chat-finish-label>{% if user_turns < 4 %}End early{% else %}Finish session{% endif %}</span>
               </button>
-              <button type="submit" name="action" value="send" class="peertrain-chat-send" data-chat-send aria-label="Send response">
+              <button type="submit" name="action" value="send" class="peertrain-chat-send" data-chat-send {% if not can_send %}disabled{% endif %} aria-label="Send response">
                 <i class="bi bi-send" aria-hidden="true"></i>
               </button>
             </div>

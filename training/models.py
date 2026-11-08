@@ -1,5 +1,6 @@
+import uuid
+
 from django.conf import settings
-from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
@@ -39,10 +40,12 @@ class TrainingSession(models.Model):
         IN_PROGRESS = "IN_PROGRESS", "In progress"
         COMPLETED = "COMPLETED", "Completed"
         ABANDONED = "ABANDONED", "Abandoned"
+        PAUSED = "PAUSED", "Paused — contact researcher"
+        INTERRUPTED = "INTERRUPTED", "Interrupted"
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name="training_sessions",
     )
     scenario = models.ForeignKey(Scenario, on_delete=models.PROTECT, related_name="sessions")
@@ -72,6 +75,12 @@ class TrainingSession(models.Model):
         return session_persona_for(self.scenario.boundary_type, self.persona)
 
     ended_early = models.BooleanField(default=False)
+    failure_category = models.CharField(max_length=60, blank=True, default="")
+    paused_at = models.DateTimeField(null=True, blank=True)
+    processing = models.BooleanField(default=False)
+    processing_token = models.UUIDField(default=uuid.uuid4, editable=False)
+    review_attention_at = models.DateTimeField(null=True, blank=True)
+    reflection_attention_at = models.DateTimeField(null=True, blank=True)
     rubric_version = models.CharField(max_length=30, default="BOUNDARY-SKILLS-2.0")
 
     class Meta:
@@ -461,49 +470,6 @@ class BoundaryTurnEvaluation(models.Model):
             )
         ]
 
-    @property
-    def effective_score(self):
-        if self.review_status == self.ReviewStatuses.CORRECTED:
-            return self.corrected_score
-        if self.review_status == self.ReviewStatuses.REJECTED:
-            return None
-        return self.score
-
-    def clean(self):
-        super().clean()
-        if self.review_status == self.ReviewStatuses.CORRECTED:
-            errors = {}
-            if self.corrected_score is None:
-                errors["corrected_score"] = "A corrected review requires a score."
-            if not self.corrected_judgement:
-                errors["corrected_judgement"] = (
-                    "A corrected review requires a judgement."
-                )
-            score_ranges = {
-                self.Judgements.MET: {4, 5},
-                self.Judgements.PARTLY_MET: {3},
-                self.Judgements.MISSED: {2},
-                self.Judgements.BOUNDARY_CONCERN: {1, 2},
-            }
-            if (
-                self.corrected_judgement
-                and self.corrected_judgement not in score_ranges
-            ):
-                errors["corrected_judgement"] = (
-                    "Use Rejected when the row should be treated as not applicable."
-                )
-            elif (
-                self.corrected_score is not None
-                and self.corrected_judgement
-                and self.corrected_score
-                not in score_ranges.get(self.corrected_judgement, set())
-            ):
-                errors["corrected_score"] = (
-                    "The corrected score does not match the corrected judgement."
-                )
-            if errors:
-                raise ValidationError(errors)
-
     def __str__(self):
         return (
             f"Run {self.run_id}, turn {self.trainee_turn_number}, "
@@ -597,6 +563,32 @@ class ReflectionMessage(models.Model):
     sender_type = models.CharField(max_length=10, choices=Message.SenderTypes.choices)
     content = models.TextField()
     request_id = models.UUIDField(null=True, blank=True, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+
+
+class LiveFeedbackEvent(models.Model):
+    class Types(models.TextChoices):
+        OPEN = "OPEN", "Open"
+        CLOSE = "CLOSE", "Close"
+
+    session = models.ForeignKey(TrainingSession, on_delete=models.PROTECT, related_name="interaction_logs")
+    event_type = models.CharField(max_length=5, choices=Types.choices)
+    trainee_turn_number = models.PositiveIntegerField()
+    latest_message = models.ForeignKey(Message, null=True, blank=True, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+
+
+class SessionManagementEvent(models.Model):
+    session = models.ForeignKey(TrainingSession, on_delete=models.PROTECT, related_name="management_events")
+    action = models.CharField(max_length=30)
+    category = models.CharField(max_length=60, blank=True)
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

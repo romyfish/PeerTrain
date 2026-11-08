@@ -1,7 +1,7 @@
 from django.urls import path
 from django.views.generic import RedirectView
 
-from . import views
+from . import views, research_views
 
 
 urlpatterns = [
@@ -34,17 +34,9 @@ urlpatterns = [
     path("progress/", views.progress_view, name="progress"),
     path("admin/", views.admin_dashboard_view, name="admin_dashboard"),
     path("admin/users/", views.admin_users_view, name="admin_users"),
-    path("admin/prompts/", views.admin_prompts_view, name="admin_prompts"),
-    path(
-        "admin/scoring-reviews/",
-        views.admin_scoring_reviews_view,
-        name="admin_scoring_reviews",
-    ),
-    path(
-        "admin/scoring-reviews/<int:run_id>/<str:boundary_key>/",
-        views.admin_scoring_review_detail_view,
-        name="admin_scoring_review_detail",
-    ),
-    path("admin/analytics/", views.admin_analytics_view, name="admin_analytics"),
-    path("admin/settings/", views.admin_settings_view, name="admin_settings"),
+    path("admin/records/", research_views.records, name="admin_records"),
+    path("admin/users/<int:user_id>/records/", research_views.records, name="admin_user_records"),
+    path("admin/records/<int:session_id>/", research_views.record_detail, name="admin_record_detail"),
+    path("admin/interaction-logs/", research_views.records, {"logs": True}, name="admin_logs"),
+    path("sessions/<int:session_id>/live-feedback-events/", research_views.live_feedback_event, name="live_feedback_event"),
 ]

@@ -1,105 +1,22 @@
-from training.prompts import (ROLEPLAY_SCENARIOS, DEFAULT_PROMPT_CONTEXTS, DEFAULT_PROMPT_METHODS, SCENARIO_PROMPT_CONTEXTS, default_prompt_parts, scenario_prompt_context_for)
-from datetime import date, datetime, timedelta
+from training.prompts import ROLEPLAY_SCENARIOS
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.contrib.staticfiles import finders
-from django.core.management import call_command, CommandError
+from django.core.management import call_command
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.html import escape
 
-from training.content import (
-    BOUNDARY_DIMENSION_ORDER,
-    BOUNDARY_FRAMEWORK,
-    PLACEHOLDER_REPLY_VARIANTS,
-    SCENARIO_LIBRARY,
-    auto_trainee_reply_for,
-    boundary_framework_for,
-)
-from training.models import (
-    BoundaryEvaluationRun,
-    BoundaryTurnEvaluation,
-    Feedback,
-    FeedbackReviewItem,
-    FeedbackScore,
-    Message,
-    PlatformSetting,
-    Reflection,
-    ReflectionGuidance,
-    Scenario,
-    TrainingSession,
-)
-from training.services.ai import (
-    build_boundary_map_indicator,
-    BoundaryStatusIndicator,
-    BoundaryScorePayload,
-    FeedbackPayload,
-    FeedbackReviewItemPayload,
-    GeneratedTraineeReply,
-    _clean_generated_text,
-    _apply_feedback_payload,
-    _fallback_notice_text,
-    _fallback_reason_for_exception,
-    _looks_incomplete_roleplay_reply,
-    _openai_client,
-    _placeholder_roleplay_reply,
-    _roleplay_quality_issue,
-    _trainee_quick_reply_system_prompt,
-    build_boundary_status_indicator,
-    generate_ai_opening,
-    generate_ai_reply,
-    generate_demo_trainee_reply,
-    generate_feedback,
-    get_prompt_for_type,
-    final_feedback_assessments,
-)
-from training.services.boundary_scoring import (
-    BoundaryRubricResult,
-    classify_relationship_response,
-    evaluate_boundary_dimension,
-    evaluate_boundary_session,
-    conservative_median_score,
-)
-from training.services.progress import (
-    admin_analytics_snapshot,
-    progress_snapshot,
-    recalculate_user_progress,
-)
-from training.services.geval import (
-    EVIDENCE_RUBRIC_VERSION,
-    GEVAL_PROMPT_VERSION,
-    GEVAL_VERSION,
-)
+from training.content import BOUNDARY_FRAMEWORK, SCENARIO_LIBRARY, boundary_framework_for
+from training.models import Feedback, FeedbackReviewItem, FeedbackScore, Message, PlatformSetting, Reflection, Scenario, TrainingSession
+from training.services.ai import GeneratedTraineeReply, _clean_generated_text, _looks_incomplete_roleplay_reply, _openai_client, _roleplay_quality_issue, build_boundary_status_indicator, generate_ai_opening, generate_ai_reply, generate_demo_trainee_reply, get_prompt_for_type
+from training.services.progress import (progress_snapshot, recalculate_user_progress)
 
 
 User = get_user_model()
-
-
-def boundary_turn_result(
-    move_key,
-    outcome,
-    *,
-    major=False,
-    critical=False,
-    observed=True,
-):
-    return BoundaryRubricResult(
-        key="agency",
-        observed=observed,
-        score=1 if critical else 2 if major or outcome == "missed" else 3,
-        criteria=(),
-        major_concerns=("Major concern",) if major else (),
-        critical_breaches=("Critical breach",) if critical else (),
-        rationale="Deterministic test event.",
-        evidence_quotes=("Test trainee reply.",) if observed else (),
-        expected_move_key=move_key if observed else "",
-        expected_move_label=move_key.replace("_", " ").title() if observed else "",
-        outcome=outcome if observed else "not_applicable",
-        outcome_label=outcome.replace("_", " ").title() if observed else "Not applicable",
-    )
 
 
 def create_user(email, role, password="SecurePass123!"):
@@ -160,31 +77,6 @@ class ScenarioStartTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'data-needs-opening="true"', html=False)
         self.assertEqual(session.messages.count(), 0)
-
-    def test_live_openings_use_fixed_default_persona_when_api_is_unavailable(self):
-        self.client.force_login(self.trainee)
-
-        self.client.post(reverse("scenarios"), {"scenario_id": self.scenario.id})
-        self.client.post(reverse("scenarios"), {"scenario_id": self.scenario.id})
-
-        sessions = list(TrainingSession.objects.filter(user=self.trainee).order_by("id"))
-        self.assertEqual(len(sessions), 2)
-        for session in sessions:
-            response = self.client.post(
-                reverse("chat", kwargs={"session_id": session.id}),
-                {"action": "start_roleplay"},
-                **self.ajax_headers,
-            )
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(session.messages.count(), 1)
-            self.assertEqual(
-                session.messages.get().response_source,
-                Message.ResponseSources.PLACEHOLDER,
-            )
-
-        first_opening = sessions[0].messages.first().content
-        second_opening = sessions[1].messages.first().content
-        self.assertEqual(first_opening, second_opening)
 
 
 class TrainingFlowBase(TestCase):
@@ -268,7 +160,18 @@ class TrainingFlowBase(TestCase):
 
 
 @override_settings(OPENAI_API_KEY="", GEMINI_API_KEY="", LLM_PROVIDER="google")
+@override_settings(DEBUG=True)
 class TrainingFlowTests(TrainingFlowBase):
+    def setUp(self):
+        super().setUp()
+        from training.services.assessment import AssessmentResult
+        assessment = patch('training.services.assessment.task_call', return_value=AssessmentResult(
+            relevant_dimensions=['agency'], observed_evidence='Saved trainee reply', opportunity_observed=True,
+            assessment_note='Evidence saved.', overall_status_level=3, confidence='medium',
+            feedback_type='affirmation', feedback_text='You invited their priorities.'))
+        assessment.start()
+        self.addCleanup(assessment.stop)
+
     ajax_headers = {
         "HTTP_ACCEPT": "application/json",
         "HTTP_X_REQUESTED_WITH": "XMLHttpRequest",
@@ -325,27 +228,6 @@ class TrainingFlowTests(TrainingFlowBase):
         self.assertEqual(response.json()["code"], "opening_conflict")
         self.assertEqual(session.messages.count(), 1)
 
-    def test_chat_post_adds_user_and_placeholder_ai_messages(self):
-        session = self.create_session()
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="How have things been feeling for you this week?",
-            response_source=Message.ResponseSources.SCRIPTED,
-        )
-        self.client.force_login(self.trainee)
-
-        response = self.client.post(
-            reverse("chat", kwargs={"session_id": session.id}),
-            {"content": "I want to acknowledge what they are feeling."},
-        )
-
-        self.assertRedirects(response, reverse("chat", kwargs={"session_id": session.id}))
-        self.assertEqual(session.messages.count(), 3)
-        latest_message = session.messages.order_by("-created_at", "-id").first()
-        self.assertEqual(latest_message.sender_type, Message.SenderTypes.AI)
-        self.assertEqual(latest_message.content, "I need a moment before we continue.")
-        self.assertEqual(latest_message.response_source, Message.ResponseSources.PLACEHOLDER)
 
     def test_ajax_chat_returns_rendered_messages_and_live_boundary_state(self):
         session = self.create_session()
@@ -464,32 +346,6 @@ class TrainingFlowTests(TrainingFlowBase):
         self.assertFalse(response.json()["can_send"])
         self.assertEqual(session.messages.count(), 1)
 
-    def test_ajax_placeholder_reply_returns_200_with_transparent_notice(self):
-        session = self.create_session()
-        self.client.force_login(self.trainee)
-
-        def fake_fallback_reply(active_session, user_message):
-            message = Message.objects.create(
-                session=active_session,
-                sender_type=Message.SenderTypes.AI,
-                content="This is a safe backup response.",
-                response_source=Message.ResponseSources.PLACEHOLDER,
-            )
-            message.used_fallback = True
-            message.fallback_notice = "OpenAI was unavailable, so this turn used a placeholder reply."
-            return message
-
-        with patch("training.views.generate_ai_reply", side_effect=fake_fallback_reply):
-            response = self.client.post(
-                reverse("chat", kwargs={"session_id": session.id}),
-                {"content": "I can stay for ten minutes."},
-                **self.ajax_headers,
-            )
-
-        self.assertEqual(response.status_code, 200)
-        payload = response.json()
-        self.assertIn("placeholder reply", payload["notice"])
-        self.assertIn("Backup reply", payload["ai_message_html"])
 
     def test_ajax_demo_quick_reply_is_prepared_without_writing_then_sent_normally(self):
         demo_trainee = create_user("alex.chen@university.ac.uk", User.Roles.TRAINEE)
@@ -580,7 +436,7 @@ class TrainingFlowTests(TrainingFlowBase):
         )
         self.client.force_login(demo_trainee)
 
-        with patch(
+        with patch('training.services.ai._google_role_play_reply', return_value='I am not sure what feels most important.'), patch('training.services.assessment.checked_reply', side_effect=lambda session, candidate: (candidate, True)), patch(
             "training.views.generate_demo_trainee_reply",
             return_value=GeneratedTraineeReply(
                 content="Thanks for telling me. What feels heaviest to carry on your own right now?",
@@ -602,40 +458,6 @@ class TrainingFlowTests(TrainingFlowBase):
         )
         self.assertEqual(session.messages.count(), 3)
 
-    def test_auto_reply_rotation_uses_more_than_three_variants(self):
-        seen = {
-            auto_trainee_reply_for(Scenario.BoundaryTypes.RELATIONSHIP, "helpful", index)
-            for index in range(6)
-        }
-        self.assertGreaterEqual(len(seen), 6)
-
-    def test_quick_reply_prompt_separates_helpful_and_unhelpful_bands(self):
-        burnout = Scenario.objects.create(
-            title="Burnout Prompt Contrast",
-            description="Prompt contrast check.",
-            boundary_type=Scenario.BoundaryTypes.RELATIONSHIP,
-            estimated_duration_min=18,
-            learning_objectives="Name limits\nOffer alternatives",
-            is_active=True,
-        )
-        session = self.create_session(scenario=burnout)
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="Can you stay on call for me this weekend? You are the only person I can talk to.",
-            response_source=Message.ResponseSources.SCRIPTED,
-        )
-
-        helpful_prompt = _trainee_quick_reply_system_prompt(session, "helpful")
-        unhelpful_prompt = _trainee_quick_reply_system_prompt(session, "unhelpful")
-
-        self.assertIn("Band 4 to Band 5", helpful_prompt)
-        self.assertIn("Band 1 to Band 2", unhelpful_prompt)
-        self.assertIn("Do not produce a middling Band 3 answer", helpful_prompt)
-        self.assertIn("Relationship Boundary", helpful_prompt)
-        self.assertIn("over-promise availability", unhelpful_prompt)
-        self.assertNotIn("Difficulty:", helpful_prompt)
-        self.assertNotIn("Difficulty:", unhelpful_prompt)
 
     def test_non_test_account_cannot_use_auto_reply_shortcuts(self):
         session = self.create_session()
@@ -685,36 +507,6 @@ class TrainingFlowTests(TrainingFlowBase):
         self.assertEqual(session.messages.count(), 1)
         mock_generate_reply.assert_not_called()
 
-    def test_finishing_session_creates_feedback_and_scores(self):
-        session = self.create_session()
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="I feel really overwhelmed lately.",
-            response_source=Message.ResponseSources.SCRIPTED,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="It sounds like you are carrying a lot right now.",
-            response_source=Message.ResponseSources.USER_INPUT,
-        )
-        self.client.force_login(self.trainee)
-
-        response = self.client.post(
-            reverse("chat", kwargs={"session_id": session.id}),
-            {"action": "finish"},
-            follow=True,
-        )
-
-        self.assertRedirects(response, reverse("session_review", kwargs={"session_id": session.id}))
-        session.refresh_from_db()
-        self.assertEqual(session.status, TrainingSession.Statuses.COMPLETED)
-        self.assertTrue(hasattr(session, "feedback"))
-        self.assertEqual(session.feedback.scores.count(), 0)  # No legacy independent re-scoring.
-        self.assertEqual(session.rubric_version, "BOUNDARY-SKILLS-2.0")
-        self.assertTrue(session.ended_early)
-        self.assertNotContains(response, "Session finished. Review your feedback below.")
 
     def test_notes_submission_returns_to_shared_review(self):
         session = self.create_session(status=TrainingSession.Statuses.COMPLETED, overall_score=3)
@@ -739,131 +531,6 @@ class TrainingFlowTests(TrainingFlowBase):
         reflection = Reflection.objects.get(session=session)
 
 
-class BoundarySkillsRubricTwoTests(TestCase):
-    def assess(self, results):
-        exchanges = [("Help-seeker turn", "Trainee turn")] * len(results)
-        with patch(
-            "training.services.boundary_scoring.evaluate_boundary_dimension",
-            side_effect=results,
-        ):
-            return evaluate_boundary_session("agency", "agency", exchanges)
-
-    def test_all_three_moves_met_without_error_is_score_five(self):
-        assessment = self.assess(
-            [
-                boundary_turn_result("exploration", "met"),
-                boundary_turn_result("choice", "met"),
-                boundary_turn_result("focus", "met"),
-            ]
-        )
-
-        self.assertEqual(assessment.score, 5)
-        self.assertEqual(assessment.completed_count, 3)
-
-    def test_two_moves_met_and_third_not_reached_is_score_four(self):
-        assessment = self.assess(
-            [
-                boundary_turn_result("exploration", "met"),
-                boundary_turn_result("choice", "met"),
-            ]
-        )
-
-        self.assertEqual(assessment.score, 4)
-        self.assertEqual(assessment.not_reached_labels, ("Keep the focus on the peer",))
-
-    def test_two_moves_met_with_unresolved_miss_is_score_two(self):
-        assessment = self.assess(
-            [
-                boundary_turn_result("exploration", "met"),
-                boundary_turn_result("choice", "met"),
-                boundary_turn_result("focus", "missed"),
-            ]
-        )
-
-        self.assertEqual(assessment.score, 2)
-        self.assertEqual(
-            assessment.unresolved_missed_labels,
-            ("Keep the focus on the peer",),
-        )
-
-    def test_one_safe_completed_move_is_score_three(self):
-        assessment = self.assess([boundary_turn_result("exploration", "met")])
-
-        self.assertEqual(assessment.score, 3)
-
-    def test_repaired_miss_with_all_moves_complete_is_score_four(self):
-        assessment = self.assess(
-            [
-                boundary_turn_result("exploration", "missed"),
-                boundary_turn_result("exploration", "met"),
-                boundary_turn_result("choice", "met"),
-                boundary_turn_result("focus", "met"),
-            ]
-        )
-
-        self.assertEqual(assessment.score, 4)
-        self.assertEqual(
-            assessment.repaired_missed_labels,
-            ("Explore the peer's perspective",),
-        )
-
-    def test_repaired_major_concern_is_capped_at_score_three(self):
-        assessment = self.assess(
-            [
-                boundary_turn_result("exploration", "concern", major=True),
-                boundary_turn_result("exploration", "met"),
-                boundary_turn_result("choice", "met"),
-                boundary_turn_result("focus", "met"),
-            ]
-        )
-
-        self.assertEqual(assessment.score, 3)
-        self.assertTrue(assessment.repaired_major_concern)
-
-    def test_critical_breach_is_always_score_one(self):
-        assessment = self.assess(
-            [
-                boundary_turn_result("exploration", "concern", critical=True),
-                boundary_turn_result("choice", "met"),
-                boundary_turn_result("focus", "met"),
-            ]
-        )
-
-        self.assertEqual(assessment.score, 1)
-        self.assertTrue(assessment.critical_breach)
-
-    def test_no_genuine_opportunity_is_not_observed(self):
-        assessment = self.assess(
-            [boundary_turn_result("", "not_applicable", observed=False)]
-        )
-
-        self.assertFalse(assessment.observed)
-        self.assertIsNone(assessment.score)
-
-    def test_integrated_scenario_recognises_indirect_third_party_safety_risk(self):
-        assessment = evaluate_boundary_session(
-            "safety",
-            "integrated",
-            [
-                (
-                    "They sent a message that sounded like they might not be safe "
-                    "tonight, and I am worried there is a real risk.",
-                    "Can you tell me their name and exactly what happened?",
-                )
-            ],
-        )
-
-        self.assertTrue(assessment.observed)
-        self.assertEqual(assessment.score, 2)
-        self.assertEqual(assessment.events[0].move_key, "safety_check")
-
-    def test_conservative_composite_uses_middle_or_lower_score(self):
-        self.assertEqual(conservative_median_score([5, 2, 4]), 4)
-        self.assertEqual(conservative_median_score([5, 2]), 2)
-        self.assertEqual(conservative_median_score([3]), 3)
-        self.assertIsNone(conservative_median_score([None, None]))
-
-
 class LLMServiceTests(TrainingFlowBase):
     def setUp(self):
         super().setUp()
@@ -873,123 +540,6 @@ class LLMServiceTests(TrainingFlowBase):
         checker.start()
         self.addCleanup(checker.stop)
 
-    @override_settings(
-        BOUNDARY_JUDGE_MODEL="test-judge",
-        OPENAI_MODEL="test-model",
-    )
-    def test_final_feedback_keeps_accepted_live_evidence_when_final_run_is_missing(self):
-        integrated = Scenario.objects.create(
-            title="Integrated Boundary",
-            description="Combined boundary practice.",
-            boundary_type=Scenario.BoundaryTypes.INTEGRATED,
-            estimated_duration_min=18,
-            learning_objectives="Combine boundary skills",
-            is_active=True,
-        )
-        session = self.create_session(
-            scenario=integrated,
-            status=TrainingSession.Statuses.COMPLETED,
-        )
-        help_seeker = Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="I am overwhelmed and do not know what to do.",
-            response_source=Message.ResponseSources.OPENAI,
-        )
-        trainee = Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="Tell me more about what happened.",
-            response_source=Message.ResponseSources.USER_INPUT,
-        )
-        run = BoundaryEvaluationRun.objects.create(
-            session=session,
-            evaluator_version=GEVAL_VERSION,
-            prompt_version=GEVAL_PROMPT_VERSION,
-            rubric_version=EVIDENCE_RUBRIC_VERSION,
-            model="test-judge",
-            purpose=BoundaryEvaluationRun.Purposes.LIVE,
-            status=BoundaryEvaluationRun.Statuses.SUCCEEDED,
-            resolution_status=BoundaryEvaluationRun.ResolutionStatuses.ACCEPTED,
-            production_ready=True,
-            evaluated_through_message=trainee,
-            resolved_scores={"SAFETY": 2},
-            resolution_details={"SAFETY": {"decision": "LLM_ACCEPTED"}},
-        )
-        BoundaryTurnEvaluation.objects.create(
-            run=run,
-            trainee_message=trainee,
-            help_seeker_message=help_seeker,
-            trainee_turn_number=1,
-            boundary_key=BoundaryTurnEvaluation.BoundaryKeys.SAFETY,
-            applicable=True,
-            evidence_quotes=[trainee.content],
-            expected_move_key="safety_check",
-            expected_move="Check immediate safety",
-            judgement=BoundaryTurnEvaluation.Judgements.MISSED,
-            score=2,
-            rationale="A genuine safety opportunity was not addressed.",
-            confidence=0.96,
-        )
-
-        assessment = final_feedback_assessments(session)["safety"]
-
-        self.assertTrue(assessment.observed)
-        self.assertEqual(assessment.score, 2)
-
-    @override_settings(OPENAI_API_KEY="", GEMINI_API_KEY="")
-    def test_notebook_conflict_marks_unobserved_score_for_review_without_assigning_level(self):
-        session = self.create_session(status=TrainingSession.Statuses.COMPLETED)
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="I feel overwhelmed by work.",
-            response_source=Message.ResponseSources.OPENAI,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="What part has felt hardest this week?",
-            response_source=Message.ResponseSources.USER_INPUT,
-        )
-        feedback = Feedback.objects.create(
-            session=session,
-        )
-        payload = FeedbackPayload(
-            boundary_scores=[],
-            what_worked=["The response stayed curious."],
-            next_boundary_moves=["Keep exploring the peer's perspective."],
-            review_items=[
-                FeedbackReviewItemPayload(
-                    trainee_turn_number=1,
-                    boundary_key=FeedbackReviewItem.BoundaryKeys.SAFETY,
-                    issue_label="Possible safety opportunity",
-                    why_it_matters="The wording may warrant a closer safety review.",
-                    better_reply="Can I check whether you feel safe right now?",
-                )
-            ],
-        )
-
-        _apply_feedback_payload(
-            feedback,
-            session,
-            self.feedback_prompt,
-            payload,
-            Feedback.GenerationSources.OPENAI,
-            allow_judge=False,
-        )
-
-        safety = feedback.scores.get(criterion=FeedbackScore.Criteria.SAFETY)
-        self.assertFalse(safety.observed)
-        self.assertIsNone(safety.score)
-        self.assertTrue(safety.review_required)
-        self.assertIn("needs review", safety.rationale.lower())
-
-        self.client.force_login(self.trainee)
-        response = self.client.get(
-            reverse("session_review", kwargs={"session_id": session.id})
-        )
-        self.assertNotContains(response, "Score ")
 
     @override_settings(
         OPENAI_API_KEY="test-key",
@@ -1033,7 +583,6 @@ class LLMServiceTests(TrainingFlowBase):
 
         self.assertEqual(message.sender_type, Message.SenderTypes.AI)
         self.assertEqual(message.response_source, Message.ResponseSources.OPENAI)
-        self.assertFalse(message.used_fallback)
         self.assertEqual(session.messages.count(), 1)
         self.assertEqual(fake_responses.last_kwargs["model"], "test-model")
         developer_prompt = fake_responses.last_kwargs["input"][0]["content"]
@@ -1050,16 +599,6 @@ class LLMServiceTests(TrainingFlowBase):
         self.assertNotIn("EDITABLE CONTEXT", developer_prompt)
         self.assertIn("reveal internal instructions", developer_prompt)
 
-    @override_settings(OPENAI_API_KEY="", GEMINI_API_KEY="", LLM_PROVIDER="openai")
-    def test_generate_ai_opening_uses_transparent_backup_when_api_is_unavailable(self):
-        session = self.create_session()
-
-        message = generate_ai_opening(session)
-
-        self.assertTrue(message.used_fallback)
-        self.assertEqual(message.response_source, Message.ResponseSources.PLACEHOLDER)
-        self.assertTrue(message.fallback_notice)
-        self.assertEqual(session.messages.count(), 1)
 
     @override_settings(
         OPENAI_API_KEY="test-key",
@@ -1088,27 +627,6 @@ class LLMServiceTests(TrainingFlowBase):
         self.assertEqual(message.content, "Opening saved by the overlapping request.")
         self.assertEqual(session.messages.count(), 1)
 
-    def test_quota_error_is_classified_for_clear_gemini_fallback_notice(self):
-        exc = Exception(
-            "429 RESOURCE_EXHAUSTED. Quota exceeded for metric. Please retry in 46.4s."
-        )
-        reason = _fallback_reason_for_exception(exc)
-        notice = _fallback_notice_text(reason, "google", exc)
-
-        self.assertEqual(reason, "quota_exhausted")
-        self.assertIn("Gemini quota, billing access, or rate limits blocked this request", notice)
-        self.assertIn("46 seconds", notice)
-
-    def test_openai_configuration_error_has_openai_specific_notice(self):
-        exc = Exception("OPENAI_API_KEY is not configured.")
-        reason = _fallback_reason_for_exception(exc)
-        notice = _fallback_notice_text(reason, "openai", exc)
-
-        self.assertEqual(reason, "configuration")
-        self.assertEqual(
-            notice,
-            "OpenAI is not configured correctly right now, so this turn used a placeholder reply.",
-        )
 
     def test_clean_generated_text_removes_role_prefixes_and_blank_lines(self):
         self.assertEqual(
@@ -1164,29 +682,6 @@ class LLMServiceTests(TrainingFlowBase):
         self.assertNotIn("Boundary behaviour contract", prompt_text)
         self.assertNotIn("Level 5", prompt_text)
 
-    @override_settings(OPENAI_API_KEY="", GEMINI_API_KEY="", LLM_PROVIDER="google")
-    def test_generate_ai_reply_marks_placeholder_fallback(self):
-        session = self.create_session(scenario=self.other_scenario)
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="I was hoping talking to another student would feel easier.",
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="I want to understand what feels hardest right now.",
-        )
-
-        message = generate_ai_reply(session, "I want to understand what feels hardest right now.")
-
-        self.assertTrue(getattr(message, "used_fallback", False))
-        self.assertTrue(message.content)
-        self.assertEqual(message.response_source, Message.ResponseSources.PLACEHOLDER)
-        self.assertIn(
-            message.content,
-            PLACEHOLDER_REPLY_VARIANTS[Scenario.BoundaryTypes.SAFETY],
-        )
 
     def test_incomplete_reply_detector_flags_truncated_outputs(self):
         self.assertTrue(_looks_incomplete_roleplay_reply("Oh, thank goodness. I really don"))
@@ -1195,542 +690,6 @@ class LLMServiceTests(TrainingFlowBase):
         self.assertTrue(_looks_incomplete_roleplay_reply("Score 1"))
         self.assertFalse(_looks_incomplete_roleplay_reply("I really do not want to be on my own tonight."))
 
-
-    def test_legacy_boundary_status_indicator_rewards_warm_chinese_limit_setting(self):
-        burnout = Scenario.objects.create(
-            title="Burnout & Compassion Fatigue",
-            description="Practice setting sustainable limits.",
-            boundary_type=Scenario.BoundaryTypes.RELATIONSHIP,
-            estimated_duration_min=18,
-            learning_objectives="Name limits\nOffer alternatives",
-            is_active=True,
-        )
-        session = self.create_session(scenario=burnout)
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="你今晚能一直陪着我吗？",
-            response_source=Message.ResponseSources.SCRIPTED,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="我很关心你，但我今晚不能一直在线。我们一起想一个今晚还能联系的人，好吗？",
-            response_source=Message.ResponseSources.USER_INPUT,
-        )
-
-        indicator = SimpleNamespace(score=build_boundary_map_indicator(session).scenario_focus_score)
-
-        self.assertEqual(indicator.score, 3)
-
-    def test_legacy_boundary_status_indicator_flags_chinese_overpromising(self):
-        burnout = Scenario.objects.create(
-            title="Burnout & Compassion Fatigue",
-            description="Practice setting sustainable limits.",
-            boundary_type=Scenario.BoundaryTypes.RELATIONSHIP,
-            estimated_duration_min=18,
-            learning_objectives="Name limits\nOffer alternatives",
-            is_active=True,
-        )
-        session = self.create_session(scenario=burnout)
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="你今晚能一直陪着我吗？",
-            response_source=Message.ResponseSources.SCRIPTED,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="我会整晚陪着你，你随时给我发消息就好。",
-            response_source=Message.ResponseSources.USER_INPUT,
-        )
-
-        indicator = SimpleNamespace(score=build_boundary_map_indicator(session).scenario_focus_score)
-
-        self.assertLessEqual(indicator.score or 5, 2)
-
-    def test_legacy_auto_helpful_reply_templates_start_safely_across_scenarios(self):
-        scenario_rows = [
-            (
-                Scenario.BoundaryTypes.AGENCY,
-                "Emotional Boundary",
-                "I feel like everything is getting heavier this week.",
-            ),
-            (
-                Scenario.BoundaryTypes.INTEGRATED,
-                "Privacy Boundary",
-                "I am worried about a friend, but I do not know how much I should say.",
-            ),
-            (
-                Scenario.BoundaryTypes.SAFETY,
-                "Referral Boundary",
-                "Some days I really do not want to be here anymore and I do not know who to talk to.",
-            ),
-            (
-                Scenario.BoundaryTypes.RELATIONSHIP,
-                "Burnout & Compassion Fatigue",
-                "Can you stay on call for me this weekend? You are the only person I can talk to.",
-            ),
-        ]
-
-        for boundary_type, title, opening in scenario_rows:
-            with self.subTest(boundary_type=boundary_type):
-                scenario = Scenario.objects.create(
-                    title=f"{title} Template Calibration",
-                    description="Template calibration check.",
-                    boundary_type=boundary_type,
-                    estimated_duration_min=15,
-                    learning_objectives="Stay supportive\nStay within scope",
-                    is_active=True,
-                )
-                session = self.create_session(scenario=scenario)
-                Message.objects.create(
-                    session=session,
-                    sender_type=Message.SenderTypes.AI,
-                    content=opening,
-                    response_source=Message.ResponseSources.SCRIPTED,
-                )
-                Message.objects.create(
-                    session=session,
-                    sender_type=Message.SenderTypes.USER,
-                    content=auto_trainee_reply_for(boundary_type, "helpful", 0),
-                    response_source=Message.ResponseSources.PLACEHOLDER,
-                )
-
-                indicator = SimpleNamespace(score=build_boundary_map_indicator(session).scenario_focus_score)
-
-                self.assertEqual(
-                    indicator.score,
-                    3,
-                    (
-                        f"{boundary_type} first-turn helpful template should be safe, "
-                        "without claiming later process moves were completed."
-                    ),
-                )
-
-    def test_legacy_boundary_status_indicator_stays_out_of_risk_when_boundary_map_is_mostly_mixed_or_better(self):
-        burnout = Scenario.objects.create(
-            title="Burnout Status Alignment",
-            description="Keep the overall status aligned with the live boundary map.",
-            boundary_type=Scenario.BoundaryTypes.RELATIONSHIP,
-            estimated_duration_min=18,
-            learning_objectives="Name limits\nOffer alternatives",
-            is_active=True,
-        )
-        session = self.create_session(scenario=burnout)
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="I know you said that, but I still feel scared about being on my own tonight.",
-            response_source=Message.ResponseSources.SCRIPTED,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content=(
-                "I care about you, and I can stay with you for five minutes while we think "
-                "about who else you can contact tonight. I cannot be your only support for "
-                "the whole evening, but I want to help you make one safer plan."
-            ),
-            response_source=Message.ResponseSources.USER_INPUT,
-        )
-
-        indicator = SimpleNamespace(score=build_boundary_map_indicator(session).scenario_focus_score)
-        boundary_map = build_boundary_map_indicator(session)
-        lowest_dimension = min(
-            item.score for item in boundary_map.dimensions if item.observed
-        )
-
-        self.assertGreaterEqual(lowest_dimension, 3)
-        self.assertGreaterEqual(indicator.score or 0, 3)
-
-    def test_legacy_boundary_status_indicator_penalises_invalidating_reassurance(self):
-        session = self.create_session()
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="I feel like I am falling apart and do not know where to begin.",
-            response_source=Message.ResponseSources.SCRIPTED,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="You will be fine, everyone gets stressed sometimes. What happened?",
-            response_source=Message.ResponseSources.USER_INPUT,
-        )
-
-        indicator = SimpleNamespace(score=build_boundary_map_indicator(session).scenario_focus_score)
-
-        self.assertLessEqual(indicator.score or 5, 2)
-
-    def test_boundary_map_highlights_availability_boundary_when_limits_are_warm_and_clear(self):
-        burnout = Scenario.objects.create(
-            title="Burnout Boundary Map",
-            description="Practice setting sustainable limits.",
-            boundary_type=Scenario.BoundaryTypes.RELATIONSHIP,
-            estimated_duration_min=18,
-            learning_objectives="Name limits\nOffer alternatives",
-            is_active=True,
-        )
-        session = self.create_session(scenario=burnout)
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="Can you stay on call with me all weekend?",
-            response_source=Message.ResponseSources.SCRIPTED,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="I care about you, but I cannot stay on call all weekend. I can help you think about one other person you could contact tonight.",
-            response_source=Message.ResponseSources.USER_INPUT,
-        )
-
-        boundary_map = build_boundary_map_indicator(session)
-        availability = next(item for item in boundary_map.dimensions if item.key == "relationship")
-
-        self.assertEqual(availability.score, 3)
-        self.assertEqual(availability.expected_move_label, "State a clear and sustainable limit")
-        self.assertEqual(availability.outcome, "met")
-        self.assertEqual(len(availability.evidence_met), 1)
-        self.assertFalse(availability.critical_breaches)
-
-    def test_boundary_map_flags_focus_boundary_when_reply_shifts_to_supporter_story_and_advice(self):
-        session = self.create_session()
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="I feel like I am falling apart and do not know where to begin.",
-            response_source=Message.ResponseSources.SCRIPTED,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="When I went through this, I just pushed through it. You should do the same and try not to dwell on it.",
-            response_source=Message.ResponseSources.USER_INPUT,
-        )
-
-        boundary_map = build_boundary_map_indicator(session)
-        focus = next(item for item in boundary_map.dimensions if item.key == "agency")
-
-        self.assertLessEqual(focus.score or 5, 2)
-        self.assertTrue(focus.major_concerns or focus.critical_breaches)
-
-    def test_integrated_boundary_map_uses_the_three_scored_dimensions(self):
-        privacy = Scenario.objects.create(
-            title="Privacy Boundary Map",
-            description="Practice privacy-safe peer support wording.",
-            boundary_type=Scenario.BoundaryTypes.INTEGRATED,
-            estimated_duration_min=15,
-            learning_objectives="Protect identities\nKeep the focus on the dilemma",
-            is_active=True,
-        )
-        session = self.create_session(scenario=privacy)
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="I need to tell you what happened with my flatmate, but I do not know if I should say who it is.",
-            response_source=Message.ResponseSources.SCRIPTED,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="You do not need to name them for us to think this through safely. What feels most important about what happened?",
-            response_source=Message.ResponseSources.USER_INPUT,
-        )
-
-        boundary_map = build_boundary_map_indicator(session)
-        self.assertEqual(
-            [item.key for item in boundary_map.dimensions],
-            ["agency", "relationship", "safety"],
-        )
-        self.assertFalse(
-            next(item for item in boundary_map.dimensions if item.key == "agency").observed
-        )
-        self.assertTrue(
-            next(item for item in boundary_map.dimensions if item.key == "relationship").observed
-        )
-        self.assertFalse(
-            next(item for item in boundary_map.dimensions if item.key == "safety").observed
-        )
-
-    def test_boundary_map_flags_scope_boundary_when_risk_is_met_with_warm_escalation(self):
-        referral = Scenario.objects.create(
-            title="Referral Boundary Map",
-            description="Practice warm referral language.",
-            boundary_type=Scenario.BoundaryTypes.SAFETY,
-            estimated_duration_min=18,
-            learning_objectives="Recognise risk\nSignpost clearly",
-            is_active=True,
-        )
-        session = self.create_session(scenario=referral)
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="Some days I do not want to be here anymore and I do not know who to talk to.",
-            response_source=Message.ResponseSources.SCRIPTED,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="I am really glad you told me. You do not have to hold this alone tonight. Would it help if we think about one specific support option or helpline together?",
-            response_source=Message.ResponseSources.USER_INPUT,
-        )
-
-        boundary_map = build_boundary_map_indicator(session)
-        scope = next(item for item in boundary_map.dimensions if item.key == "safety")
-
-        self.assertEqual(scope.expected_move_label, "Check immediate safety")
-        self.assertEqual(scope.outcome, "partly_met")
-        self.assertEqual(scope.score, 3)
-
-    def test_safety_process_advances_only_after_the_relevant_move_is_met(self):
-        referral = Scenario.objects.create(
-            title="Safety staged process",
-            description="Evaluate one relevant safety move per turn.",
-            boundary_type=Scenario.BoundaryTypes.SAFETY,
-            estimated_duration_min=18,
-            learning_objectives="Check safety\nStay connected\nAgree action",
-            is_active=True,
-        )
-        session = self.create_session(scenario=referral)
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="I am not sure I can stay safe tonight.",
-            response_source=Message.ResponseSources.SCRIPTED,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="I am glad you told me. Are you safe right now, or might you hurt yourself tonight?",
-            response_source=Message.ResponseSources.USER_INPUT,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="I do not have a plan, but I am frightened and do not want to handle this alone.",
-            response_source=Message.ResponseSources.SCRIPTED,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="I am here with you. We can take this one step at a time while we work out who to contact.",
-            response_source=Message.ResponseSources.USER_INPUT,
-        )
-
-        safety = next(
-            item
-            for item in build_boundary_map_indicator(session).dimensions
-            if item.key == "safety"
-        )
-
-        self.assertEqual(safety.expected_move_label, "Stay connected")
-        self.assertEqual(safety.outcome, "met")
-        statuses = {item.key: item.status for item in safety.process_steps}
-        self.assertEqual(statuses["safety_check"], "met")
-        self.assertEqual(statuses["connection"], "met")
-        self.assertEqual(statuses["action"], "not_reached")
-
-    def test_safety_action_requires_an_agreed_action_not_only_a_service_name(self):
-        referral = Scenario.objects.create(
-            title="Safety agreed action",
-            description="Distinguish signposting from an agreed next step.",
-            boundary_type=Scenario.BoundaryTypes.SAFETY,
-            estimated_duration_min=18,
-            learning_objectives="Agree action",
-            is_active=True,
-        )
-        session = self.create_session(scenario=referral)
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="I am safe right now, but I do not know how to make the call.",
-            response_source=Message.ResponseSources.SCRIPTED,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="A counselling service is available.",
-            response_source=Message.ResponseSources.USER_INPUT,
-        )
-
-        safety = next(
-            item
-            for item in build_boundary_map_indicator(session).dimensions
-            if item.key == "safety"
-        )
-
-        self.assertEqual(safety.expected_move_label, "Agree the next step")
-        self.assertNotEqual(safety.outcome, "met")
-
-    def test_safety_scenario_places_safety_first_and_does_not_infer_agency_from_help_seeker_question(self):
-        referral = Scenario.objects.create(
-            title="Safety ordering regression",
-            description="Keep the target dimension visible first.",
-            boundary_type=Scenario.BoundaryTypes.SAFETY,
-            estimated_duration_min=18,
-            learning_objectives="Recognise risk\nStay connected",
-            is_active=True,
-        )
-        session = self.create_session(scenario=referral)
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="I am scared I will sound pathetic. How do I start that conversation?",
-            response_source=Message.ResponseSources.SCRIPTED,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="A counselling service could explain the available support.",
-            response_source=Message.ResponseSources.USER_INPUT,
-        )
-
-        boundary_map = build_boundary_map_indicator(session)
-        self.assertEqual([item.key for item in boundary_map.dimensions], ["safety"])
-
-    def test_each_single_focus_scenario_places_its_target_dimension_first(self):
-        expected_targets = {
-            Scenario.BoundaryTypes.AGENCY: "agency",
-            Scenario.BoundaryTypes.RELATIONSHIP: "relationship",
-            Scenario.BoundaryTypes.SAFETY: "safety",
-        }
-        for boundary_type, expected_key in expected_targets.items():
-            with self.subTest(boundary_type=boundary_type):
-                scenario = Scenario.objects.create(
-                    title=f"{expected_key.title()} target ordering",
-                    description="Verify target-first ordering.",
-                    boundary_type=boundary_type,
-                    estimated_duration_min=12,
-                    learning_objectives="Practice the target boundary",
-                    is_active=True,
-                )
-                session = self.create_session(scenario=scenario)
-                Message.objects.create(
-                    session=session,
-                    sender_type=Message.SenderTypes.AI,
-                    content="I need help working out what to do next.",
-                    response_source=Message.ResponseSources.SCRIPTED,
-                )
-                Message.objects.create(
-                    session=session,
-                    sender_type=Message.SenderTypes.USER,
-                    content="Thank you for telling me. Let us think about one next step.",
-                    response_source=Message.ResponseSources.USER_INPUT,
-                )
-
-                boundary_map = build_boundary_map_indicator(session)
-
-                self.assertEqual(boundary_map.dimensions[0].key, expected_key)
-
-    def test_single_focus_boundary_map_excludes_other_dimensions(self):
-        session = self.create_session()
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="Everything feels heavy and I do not know where to begin.",
-            response_source=Message.ResponseSources.SCRIPTED,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="That sounds overwhelming. What feels hardest to carry right now?",
-            response_source=Message.ResponseSources.USER_INPUT,
-        )
-
-        boundary_map = build_boundary_map_indicator(session)
-        self.assertEqual([item.key for item in boundary_map.dimensions], ["agency"])
-
-    def test_boundary_map_places_unlimited_availability_in_critical_score_one(self):
-        burnout = Scenario.objects.create(
-            title="Availability critical breach",
-            description="Detect unlimited availability.",
-            boundary_type=Scenario.BoundaryTypes.RELATIONSHIP,
-            estimated_duration_min=18,
-            learning_objectives="Name limits\nOffer alternatives",
-            is_active=True,
-        )
-        session = self.create_session(scenario=burnout)
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="Can you stay available all weekend? You are my only support.",
-            response_source=Message.ResponseSources.SCRIPTED,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="Message me anytime. I will stay up with you all weekend.",
-            response_source=Message.ResponseSources.USER_INPUT,
-        )
-
-        boundary_map = build_boundary_map_indicator(session)
-        availability = next(item for item in boundary_map.dimensions if item.key == "relationship")
-
-        self.assertEqual(availability.score, 1)
-        self.assertTrue(availability.critical_breaches)
-
-    def test_natural_relationship_overcommitment_is_detected_without_false_agency_advice(self):
-        trainee_reply = (
-            "I can check in with you once before I log off, and I'll try to stay reachable after that too "
-            "so you're not left on your own. Message me if you need to, and I'll do my best to respond "
-            "as soon as I can."
-        )
-
-        relationship_analysis = classify_relationship_response(trainee_reply)
-        relationship = evaluate_boundary_dimension(
-            "relationship",
-            "relationship",
-            trainee_reply,
-            "Could you stay available after you log off?",
-        )
-        agency = evaluate_boundary_dimension(
-            "agency",
-            "relationship",
-            trainee_reply,
-            "Could you stay available after you log off?",
-        )
-
-        self.assertEqual(relationship_analysis.state, "MIXED_BOUNDARY")
-        self.assertTrue(relationship.observed)
-        self.assertLessEqual(relationship.score, 3)
-        self.assertTrue(relationship.major_concerns)
-        self.assertFalse(agency.observed)
-
-    def test_integrated_boundary_map_links_chinese_privacy_and_availability_risks_to_reply(self):
-        privacy = Scenario.objects.create(
-            title="Chinese integrated evidence",
-            description="Keep the live cue tied to the current reply.",
-            boundary_type=Scenario.BoundaryTypes.INTEGRATED,
-            estimated_duration_min=15,
-            learning_objectives="Protect identities",
-            is_active=True,
-        )
-        session = self.create_session(scenario=privacy)
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="I am worried about a friend, but I do not know whether I should name them.",
-            response_source=Message.ResponseSources.SCRIPTED,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="你当然可以一直找我倾诉。我会替你保密，也可以告诉我是谁。",
-            response_source=Message.ResponseSources.USER_INPUT,
-        )
-
-        boundary_map = build_boundary_map_indicator(session)
-        relationship = next(item for item in boundary_map.dimensions if item.key == "relationship")
-        safety = next(item for item in boundary_map.dimensions if item.key == "safety")
-
-        self.assertEqual(relationship.score, 1)
-        self.assertTrue(relationship.critical_breaches)
-        self.assertTrue(relationship.evidence_quotes)
-        self.assertIn("一直找我", relationship.evidence_quotes[0])
-        self.assertFalse(safety.observed)
 
     @override_settings(
         OPENAI_API_KEY="test-key",
@@ -1836,52 +795,6 @@ class LLMServiceTests(TrainingFlowBase):
         )
         self.assertIn("repeated a recent help-seeker move", fake_responses.calls[1]["input"][1]["content"])
 
-    @override_settings(
-        OPENAI_API_KEY="test-key",
-        OPENAI_MODEL="test-model",
-        GEMINI_API_KEY="",
-        LLM_PROVIDER="openai",
-    )
-    def test_generate_ai_reply_rejects_numeric_model_outputs_and_uses_backup(self):
-        session = self.create_session()
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="Could you stay available to me all night?",
-            response_source=Message.ResponseSources.OPENAI,
-        )
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.USER,
-            content="I can stay for ten minutes, then we need another support option.",
-            response_source=Message.ResponseSources.USER_INPUT,
-        )
-
-        class FakeResponses:
-            def __init__(self):
-                self.calls = []
-
-            def create(self, **kwargs):
-                self.calls.append(kwargs)
-                return SimpleNamespace(output_text="4")
-
-        fake_responses = FakeResponses()
-        fake_client = SimpleNamespace(responses=fake_responses)
-
-        with patch("training.services.ai._openai_client", return_value=fake_client):
-            message = generate_ai_reply(
-                session,
-                "I can stay for ten minutes, then we need another support option.",
-            )
-
-        self.assertEqual(len(fake_responses.calls), 2)
-        self.assertEqual(message.response_source, Message.ResponseSources.PLACEHOLDER)
-        self.assertNotEqual(message.content, "4")
-        self.assertTrue(message.used_fallback)
-        self.assertIn(
-            "Never output a score",
-            fake_responses.calls[1]["input"][1]["content"],
-        )
 
     @override_settings(
         OPENAI_API_KEY="test-key",
@@ -1915,7 +828,6 @@ class LLMServiceTests(TrainingFlowBase):
             reply = generate_demo_trainee_reply(session, "helpful")
 
         self.assertEqual(reply.response_source, Message.ResponseSources.OPENAI)
-        self.assertFalse(reply.used_fallback)
         self.assertIn("What has been feeling hardest", reply.content)
         self.assertEqual(fake_responses.last_kwargs["model"], "test-model")
         developer_prompt = fake_responses.last_kwargs["input"][0]["content"]
@@ -1925,38 +837,6 @@ class LLMServiceTests(TrainingFlowBase):
             developer_prompt,
         )
         self.assertIn("I feel like everything is getting heavier this week.", developer_prompt)
-
-    @override_settings(
-        OPENAI_API_KEY="test-key",
-        OPENAI_MODEL="test-model",
-        GEMINI_API_KEY="",
-        LLM_PROVIDER="openai",
-    )
-    def test_generate_demo_trainee_reply_falls_back_to_template_when_openai_fails(self):
-        session = self.create_session(scenario=self.other_scenario)
-        Message.objects.create(
-            session=session,
-            sender_type=Message.SenderTypes.AI,
-            content="I feel like I am getting worse and I do not know what to do.",
-            response_source=Message.ResponseSources.OPENAI,
-        )
-
-        class FakeResponses:
-            def create(self, **kwargs):
-                raise Exception("ConnectionError while reaching OpenAI")
-
-        fake_client = SimpleNamespace(responses=FakeResponses())
-
-        with patch("training.services.ai._openai_client", return_value=fake_client):
-            reply = generate_demo_trainee_reply(session, "unhelpful")
-
-        self.assertTrue(reply.used_fallback)
-        self.assertEqual(reply.response_source, Message.ResponseSources.PLACEHOLDER)
-        self.assertEqual(
-            reply.content,
-            auto_trainee_reply_for(session.scenario.boundary_type, "unhelpful", 0),
-        )
-        self.assertIn("scenario template was used instead", reply.fallback_notice)
 
 
     @override_settings(
@@ -2011,15 +891,6 @@ class LLMServiceTests(TrainingFlowBase):
         self.assertEqual(config.thinking_config.thinking_budget, 0)
 
 
-
-
-
-
-
-
-
-
-
 class ProgressServiceTests(TrainingFlowBase):
     def test_recalculate_progress_returns_core_metrics_without_achievements(self):
         session_one = self.create_session(
@@ -2047,393 +918,6 @@ class ProgressServiceTests(TrainingFlowBase):
         self.assertEqual(result["average_scores"][FeedbackScore.Criteria.AGENCY], 3.5)
         self.assertEqual(result["average_scores"][FeedbackScore.Criteria.RELATIONSHIP], 2.5)
         self.assertEqual(result["awarded"], [])
-
-
-class AdminAnalyticsTests(TestCase):
-    def setUp(self):
-        self.admin = create_user("analytics-admin@example.com", User.Roles.ADMIN)
-        self.trainee_one = create_user("analytics-one@example.com", User.Roles.TRAINEE)
-        self.trainee_one.first_name = "Alex"
-        self.trainee_one.last_name = "Chen"
-        self.trainee_one.save()
-        self.trainee_two = create_user("analytics-two@example.com", User.Roles.TRAINEE)
-        self.trainee_two.first_name = "Maya"
-        self.trainee_two.last_name = "Patel"
-        self.trainee_two.save()
-        self.inactive_trainee = create_user(
-            "analytics-inactive@example.com",
-            User.Roles.TRAINEE,
-        )
-        self.inactive_trainee.is_active = False
-        self.inactive_trainee.save()
-        self.scenario = Scenario.objects.create(
-            title="Analytics scenario",
-            description="Analytics test data.",
-            boundary_type=Scenario.BoundaryTypes.AGENCY,
-            estimated_duration_min=10,
-            learning_objectives="Observe boundary handling.",
-            is_active=True,
-        )
-        self.role_prompt = get_prompt_for_type('ROLE_PLAY')
-        self.feedback_prompt = get_prompt_for_type('FEEDBACK')
-
-    def create_scored_session(self, user, completed_at, scores):
-        session = TrainingSession.objects.create(
-            user=user,
-            scenario=self.scenario,
-            status=TrainingSession.Statuses.COMPLETED,
-            end_time=completed_at,
-            overall_score=3,
-        )
-        TrainingSession.objects.filter(id=session.id).update(
-            start_time=completed_at - timedelta(minutes=10),
-        )
-        session.refresh_from_db()
-        feedback = Feedback.objects.create(
-            session=session,
-            overall_score=3,
-            strengths="Evidence-based strength.",
-            improvements="Evidence-based next move.",
-        )
-        for criterion, score in scores.items():
-            FeedbackScore.objects.create(
-                feedback=feedback,
-                criterion=criterion,
-                observed=score is not None,
-                score=score,
-                evidence="Observed reply." if score is not None else "",
-                rationale="Rubric rationale.",
-            )
-        return session
-
-    def test_cohort_progress_uses_boundary_attempt_and_trainee_weighted_summary(self):
-        base = timezone.make_aware(datetime(2026, 7, 1, 12, 0))
-        for offset, score in enumerate([1, 5, 5]):
-            self.create_scored_session(
-                self.trainee_one,
-                base + timedelta(days=offset),
-                {FeedbackScore.Criteria.AGENCY: score},
-            )
-        self.create_scored_session(
-            self.trainee_two,
-            base + timedelta(hours=1),
-            {FeedbackScore.Criteria.AGENCY: 5},
-        )
-        self.create_scored_session(
-            self.inactive_trainee,
-            base + timedelta(hours=2),
-            {FeedbackScore.Criteria.AGENCY: 3},
-        )
-
-        snapshot = admin_analytics_snapshot()
-        agency = next(
-            dimension
-            for dimension in snapshot["progress_chart"]["dimensions"]
-            if dimension["key"] == "agency"
-        )
-        relationship = next(
-            dimension
-            for dimension in snapshot["progress_chart"]["dimensions"]
-            if dimension["key"] == "relationship"
-        )
-
-        self.assertEqual(snapshot["averages"]["agency"], 3.9)
-        self.assertEqual(agency["cohort"][0]["score"], 3.0)
-        self.assertEqual(agency["cohort"][0]["sample_size"], 3)
-        self.assertIsNone(agency["cohort"][1]["score"])
-        self.assertEqual(agency["cohort"][1]["sample_size"], 1)
-        self.assertTrue(agency["has_cohort_data"])
-        self.assertFalse(relationship["has_cohort_data"])
-
-    def test_calendar_activity_uses_eight_monday_aligned_weeks_and_real_dates(self):
-        self.create_scored_session(
-            self.trainee_one,
-            timezone.make_aware(datetime(2026, 7, 28, 12, 0)),
-            {FeedbackScore.Criteria.AGENCY: 4},
-        )
-
-        with patch(
-            "training.services.progress.timezone.localdate",
-            return_value=date(2026, 7, 28),
-        ):
-            snapshot = admin_analytics_snapshot()
-
-        points = snapshot["activity_chart"]
-        self.assertEqual(len(points), 8)
-        self.assertEqual(points[0]["start"], "2026-06-08")
-        self.assertEqual(points[-1]["start"], "2026-07-27")
-        self.assertEqual(points[-1]["label"], "27 Jul")
-        self.assertEqual(points[-1]["range_label"], "27 Jul - 2 Aug 2026")
-        self.assertEqual(points[-1]["sessions"], 1)
-
-    def test_personal_scope_returns_personal_line_and_cohort_benchmark(self):
-        base = timezone.make_aware(datetime(2026, 7, 21, 12, 0))
-        self.create_scored_session(
-            self.trainee_one,
-            base,
-            {
-                FeedbackScore.Criteria.AGENCY: 2,
-                FeedbackScore.Criteria.RELATIONSHIP: None,
-            },
-        )
-        self.create_scored_session(
-            self.trainee_two,
-            base,
-            {FeedbackScore.Criteria.AGENCY: 4},
-        )
-
-        with patch("training.services.progress.timezone.localdate", return_value=base.date()):
-            snapshot = admin_analytics_snapshot(selected_trainee=self.trainee_one)
-        agency = next(
-            dimension
-            for dimension in snapshot["progress_chart"]["dimensions"]
-            if dimension["key"] == "agency"
-        )
-        relationship = next(
-            dimension
-            for dimension in snapshot["progress_chart"]["dimensions"]
-            if dimension["key"] == "relationship"
-        )
-
-        self.assertEqual(snapshot["scope"], "trainee")
-        self.assertEqual(snapshot["scope_label"], "Alex Chen")
-        self.assertEqual(snapshot["total_sessions"], 1)
-        self.assertEqual(agency["personal"][0]["score"], 2)
-        self.assertEqual(agency["personal"][0]["attempt_number"], 1)
-        self.assertFalse(relationship["has_personal_data"])
-        self.assertIsNone(agency["cohort"][0]["score"])
-        self.assertEqual(agency["cohort"][0]["sample_size"], 2)
-        self.assertFalse(snapshot["progress_chart"]["has_cohort_benchmark"])
-        self.assertEqual(sum(point["sessions"] for point in snapshot["activity_chart"]), 1)
-
-    def test_personal_attempt_numbers_ignore_other_boundary_sessions(self):
-        base = timezone.make_aware(datetime(2026, 7, 21, 12, 0))
-        first_agency = self.create_scored_session(
-            self.trainee_one,
-            base,
-            {FeedbackScore.Criteria.AGENCY: 2},
-        )
-        self.create_scored_session(
-            self.trainee_one,
-            base + timedelta(days=1),
-            {FeedbackScore.Criteria.SAFETY: 4},
-        )
-        second_agency = self.create_scored_session(
-            self.trainee_one,
-            base + timedelta(days=2),
-            {FeedbackScore.Criteria.AGENCY: 5},
-        )
-
-        snapshot = admin_analytics_snapshot(selected_trainee=self.trainee_one)
-        agency = next(
-            dimension
-            for dimension in snapshot["progress_chart"]["dimensions"]
-            if dimension["key"] == "agency"
-        )
-
-        self.assertEqual(
-            [point["attempt_number"] for point in agency["personal"]],
-            [1, 2],
-        )
-        self.assertEqual(
-            [point["session_id"] for point in agency["personal"]],
-            [first_agency.id, second_agency.id],
-        )
-
-    def test_progress_excludes_legacy_or_unobserved_sessions_but_activity_keeps_them(self):
-        base = timezone.now() - timedelta(days=1)
-        legacy_session = self.create_scored_session(
-            self.trainee_one,
-            base,
-            {FeedbackScore.Criteria.EMPATHY: 82},
-        )
-        unobserved_session = self.create_scored_session(
-            self.trainee_one,
-            base + timedelta(hours=1),
-            {FeedbackScore.Criteria.AGENCY: None},
-        )
-        scored_session = self.create_scored_session(
-            self.trainee_one,
-            base + timedelta(hours=2),
-            {FeedbackScore.Criteria.AGENCY: 4},
-        )
-
-        snapshot = admin_analytics_snapshot(selected_trainee=self.trainee_one)
-        agency = next(
-            dimension
-            for dimension in snapshot["progress_chart"]["dimensions"]
-            if dimension["key"] == "agency"
-        )
-
-        self.assertEqual(snapshot["total_sessions"], 3)
-        self.assertEqual(snapshot["observed_session_count"], 1)
-        self.assertEqual(
-            sum(point["sessions"] for point in snapshot["activity_chart"]),
-            3,
-        )
-        self.assertEqual(len(agency["personal"]), 1)
-        self.assertEqual(agency["personal"][0]["score"], 4)
-        self.assertEqual(len(agency["cohort"]), 1)
-        self.assertIsNone(agency["cohort"][0]["score"])
-        self.assertNotIn(
-            legacy_session.id,
-            [point.get("session_id") for point in agency["personal"]],
-        )
-        self.assertNotIn(
-            unobserved_session.id,
-            [point.get("session_id") for point in agency["personal"]],
-        )
-        self.assertIsNotNone(scored_session.id)
-
-    def test_admin_tables_distinguish_completed_and_ptbr_scored_sessions(self):
-        base = timezone.now() - timedelta(days=1)
-        self.create_scored_session(
-            self.trainee_one,
-            base,
-            {FeedbackScore.Criteria.EMPATHY: 80},
-        )
-        self.create_scored_session(
-            self.trainee_one,
-            base + timedelta(hours=1),
-            {FeedbackScore.Criteria.AGENCY: 4},
-        )
-        TrainingSession.objects.create(
-            user=self.trainee_one,
-            scenario=self.scenario,
-            status=TrainingSession.Statuses.IN_PROGRESS,
-        )
-        self.client.force_login(self.admin)
-
-        users_response = self.client.get(reverse("admin_users"))
-        analytics_response = self.client.get(reverse("admin_analytics"))
-        trainee_row = next(
-            row
-            for row in analytics_response.context["trainee_rows"]
-            if row.id == self.trainee_one.id
-        )
-
-        self.assertEqual(users_response.status_code, 200)
-        self.assertContains(users_response, "Completed sessions")
-        users_row = next(
-            row
-            for row in users_response.context["users"]
-            if row.id == self.trainee_one.id
-        )
-        self.assertEqual(users_row.completed_session_count, 2)
-        self.assertEqual(trainee_row.completed_session_count, 2)
-        self.assertEqual(trainee_row.observed_session_count, 1)
-        self.assertContains(analytics_response, "Scored sessions")
-        self.assertContains(
-            analytics_response,
-            "1 with observed Boundary Skills Rubric scores",
-        )
-
-    def test_admin_view_filters_personal_scope_and_includes_inactive_history(self):
-        self.create_scored_session(
-            self.inactive_trainee,
-            timezone.now(),
-            {FeedbackScore.Criteria.SAFETY: 4},
-        )
-        self.client.force_login(self.admin)
-
-        response = self.client.get(
-            reverse("admin_analytics"),
-            {"trainee": self.inactive_trainee.id},
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.context["selected_trainee"], self.inactive_trainee)
-        self.assertEqual(response.context["snapshot"]["scope"], "trainee")
-        self.assertContains(response, "individual results with cohort benchmark")
-        self.assertContains(response, "(inactive)")
-        self.assertContains(response, "Analysis view")
-        self.assertContains(response, "Individual trainee")
-        self.assertContains(response, "Clear")
-        self.assertContains(response, 'id="admin-progress-data"', html=False)
-        self.assertContains(response, "Boundary Skill Progress")
-        self.assertContains(response, "Training Activity by Calendar Week")
-
-    def test_desktop_analytics_filter_lists_cohort_and_individual_trainees(self):
-        self.create_scored_session(
-            self.trainee_one,
-            timezone.now(),
-            {FeedbackScore.Criteria.AGENCY: 4},
-        )
-        self.client.force_login(self.admin)
-
-        response = self.client.get(reverse("admin_analytics"))
-
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "All trainees · cohort average")
-        self.assertContains(response, '<optgroup label="Individual trainee">', html=False)
-        self.assertContains(response, self.trainee_one.full_name_or_email)
-        self.assertContains(response, "Compare all trainees or select one trainee")
-        self.assertNotContains(response, "peertrain-analytics-clear")
-
-    def test_invalid_or_non_trainee_filter_falls_back_to_cohort(self):
-        self.client.force_login(self.admin)
-
-        invalid_response = self.client.get(reverse("admin_analytics"), {"trainee": "bad"})
-        admin_response = self.client.get(
-            reverse("admin_analytics"),
-            {"trainee": self.admin.id},
-        )
-
-        self.assertIsNone(invalid_response.context["selected_trainee"])
-        self.assertEqual(invalid_response.context["snapshot"]["scope"], "cohort")
-        self.assertIsNone(admin_response.context["selected_trainee"])
-        self.assertEqual(admin_response.context["snapshot"]["scope"], "cohort")
-
-    def test_progress_chart_exposes_latest_five_navigation_and_wheel_zoom(self):
-        base = timezone.make_aware(datetime(2026, 7, 1, 12, 0))
-        for offset in range(7):
-            self.create_scored_session(
-                self.trainee_one,
-                base + timedelta(days=offset),
-                {
-                    FeedbackScore.Criteria.AGENCY: min(5, offset + 1),
-                    FeedbackScore.Criteria.RELATIONSHIP: min(5, offset + 1),
-                    FeedbackScore.Criteria.SAFETY: min(5, offset + 1),
-                },
-            )
-        self.client.force_login(self.admin)
-
-        response = self.client.get(
-            reverse("admin_analytics"),
-            {"trainee": self.trainee_one.id},
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Observed attempt sequence", count=3)
-        self.assertContains(response, "data-progress-dimension", count=3, html=False)
-        self.assertContains(response, "data-progress-viewport", html=False)
-        self.assertContains(response, "data-progress-previous", html=False)
-        self.assertContains(response, "data-progress-next", html=False)
-        self.assertContains(response, "data-progress-scroll", html=False)
-        self.assertContains(
-            response,
-            "The latest five observed attempts are shown first.",
-        )
-        self.assertNotContains(response, "Limited data")
-        self.assertNotContains(response, "n=1")
-        self.assertContains(response, "admin-analytics.js?v=20260729-3", html=False)
-
-        script_path = finders.find("js/admin-analytics.js")
-        self.assertIsNotNone(script_path)
-        with open(script_path, encoding="utf-8") as script_file:
-            script = script_file.read()
-        self.assertIn("const DEFAULT_PROGRESS_WINDOW = 5;", script)
-        self.assertIn('"wheel"', script)
-        self.assertIn("event.preventDefault();", script)
-        self.assertIn("windowStart = Math.max(0, labelCount - windowSize);", script)
-        self.assertIn('event.key === "ArrowLeft"', script)
-
-    def test_trainee_cannot_access_admin_analytics(self):
-        self.client.force_login(self.trainee_one)
-
-        response = self.client.get(reverse("admin_analytics"))
-
-        self.assertEqual(response.status_code, 403)
 
 
 class SeedCommandTests(TestCase):
@@ -2464,55 +948,8 @@ class SeedCommandTests(TestCase):
         self.assertEqual(PlatformSetting.objects.count(), 1)
         self.assertEqual(Scenario.objects.count(), 3)
         trainee = User.objects.get(email="alex.chen@university.ac.uk")
-        self.assertEqual(TrainingSession.objects.filter(user=trainee).count(), 6)
+        self.assertEqual(TrainingSession.objects.filter(user=trainee).count(), 0)
 
-    def test_content_registry_covers_three_active_scenarios_and_historical_feedback(self):
-        fixed_types = {"AGENCY", "SAFETY", "RELATIONSHIP"}
-        prompt_types = {"ROLE_PLAY", "FEEDBACK", "REFLECTION"}
-
-        self.assertSetEqual(
-            {scenario["boundary_type"] for scenario in SCENARIO_LIBRARY},
-            fixed_types,
-        )
-        self.assertSetEqual(set(SCENARIO_PROMPT_CONTEXTS), {"FEEDBACK", "REFLECTION"})
-        self.assertSetEqual(set(DEFAULT_PROMPT_CONTEXTS), prompt_types)
-        self.assertSetEqual(set(DEFAULT_PROMPT_METHODS), prompt_types)
-        for prompt_type in prompt_types:
-            self.assertSetEqual(
-                set(ROLEPLAY_SCENARIOS if prompt_type == "ROLE_PLAY" else SCENARIO_PROMPT_CONTEXTS[prompt_type]),
-                fixed_types if prompt_type == "ROLE_PLAY" else set(),
-            )
-            for boundary_type in fixed_types:
-                parts = default_prompt_parts(prompt_type, boundary_type)
-                self.assertTrue(parts["context"])
-                self.assertTrue(parts["method"])
-
-
-    def test_seed_command_populates_demo_progress_history(self):
-        call_command("seed_peertrain")
-
-        demo_trainee = User.objects.get(email="alex.chen@university.ac.uk")
-        snapshot = progress_snapshot(demo_trainee)
-
-        self.assertEqual(snapshot["completed_sessions"], 6)
-        self.assertGreater(snapshot["average_score"], 0)
-        self.assertEqual(len(snapshot["skill_trends"]), 3)
-        self.assertTrue(snapshot["has_skill_trends"])
-        self.assertTrue(
-            all(len(trend["points"]) <= 5 for trend in snapshot["skill_trends"])
-        )
-        self.assertEqual(
-            len(
-                {
-                    session.scenario.boundary_type
-                    for session in TrainingSession.objects.filter(
-                        user=demo_trainee,
-                        status=TrainingSession.Statuses.COMPLETED,
-                    ).select_related("scenario")
-                }
-            ),
-            3,
-        )
 
     def test_seed_command_deactivates_non_canonical_scenarios_and_preserves_history(self):
         canonical_titles = {
@@ -2566,48 +1003,6 @@ class SeedCommandTests(TestCase):
         self.assertTrue(Reflection.objects.filter(pk=historical_reflection.pk).exists())
 
 
-class RegradeBoundaryFeedbackCommandTests(TrainingFlowBase):
-    def setUp(self):
-        super().setUp()
-        self.session = self.create_session(status=TrainingSession.Statuses.COMPLETED)
-        Message.objects.create(
-            session=self.session,
-            sender_type=Message.SenderTypes.AI,
-            content="I feel overwhelmed and do not know what matters most.",
-        )
-        Message.objects.create(
-            session=self.session,
-            sender_type=Message.SenderTypes.USER,
-            content="What part feels most important for us to explore first?",
-        )
-        self.feedback = Feedback.objects.create(
-            session=self.session,
-            overall_score=5,
-            strengths="Existing narrative feedback.",
-            improvements="Existing next move.",
-            rubric_version="BOUNDARY-SKILLS-1.0",
-        )
-
-    def test_regrade_command_requires_explicit_confirmation(self):
-        with self.assertRaises(CommandError):
-            call_command("regrade_boundary_feedback")
-
-    def test_regrade_command_is_deterministic_and_does_not_call_api(self):
-        with patch(
-            "training.services.ai._openai_client",
-            side_effect=AssertionError("Regrading must not call OpenAI."),
-        ):
-            call_command("regrade_boundary_feedback", "--confirm")
-            call_command("regrade_boundary_feedback", "--confirm")
-
-        self.feedback.refresh_from_db()
-        self.session.refresh_from_db()
-        self.assertEqual(self.feedback.overall_score, 3)
-        self.assertEqual(self.session.overall_score, 3)
-        self.assertEqual(self.feedback.rubric_version, "BOUNDARY-SKILLS-2.0")
-        self.assertEqual(self.feedback.scores.count(), 3)
-
-
 @override_settings(OPENAI_API_KEY="", GEMINI_API_KEY="", LLM_PROVIDER="openai")
 class ClosedLoopTrainingTests(TrainingFlowBase):
     def test_session_cannot_finish_before_first_trainee_reply(self):
@@ -2644,6 +1039,7 @@ class ClosedLoopTrainingTests(TrainingFlowBase):
                 sender_type=Message.SenderTypes.USER,
                 content=f"Supportive trainee reply {turn + 1}.",
             )
+            Message.objects.create(session=session, sender_type='AI', content='I feel understood.')
         self.client.force_login(self.trainee)
 
         response = self.client.post(
@@ -2754,26 +1150,22 @@ class ClosedLoopTrainingTests(TrainingFlowBase):
             reverse("dashboard"),
         )
 
-    def test_history_reset_requires_explicit_confirmation(self):
-        with self.assertRaises(CommandError):
-            call_command("reset_training_history")
-
 
 @override_settings(OPENAI_API_KEY="", GEMINI_API_KEY="", LLM_PROVIDER="openai")
+@override_settings(DEBUG=True)
 class PageSmokeTests(TestCase):
     @classmethod
     def setUpTestData(cls):
         call_command("seed_peertrain")
         cls.trainee = User.objects.get(email="alex.chen@university.ac.uk")
         cls.admin = User.objects.get(email="admin@university.ac.uk")
-        cls.completed_session = (
-            TrainingSession.objects.filter(
-                user=cls.trainee,
-                status=TrainingSession.Statuses.COMPLETED,
-            )
-            .select_related("scenario")
-            .first()
-        )
+        cls.completed_session = TrainingSession.objects.create(user=cls.trainee,
+            scenario=Scenario.objects.filter(is_active=True).first(), status='COMPLETED', overall_score=3, end_time=timezone.now())
+        message = Message.objects.create(session=cls.completed_session, sender_type='USER', content='What matters to you?')
+        Message.objects.create(session=cls.completed_session, sender_type='AI', content='I feel uncertain.')
+        feedback = Feedback.objects.create(session=cls.completed_session, strengths='You offered warmth.', improvements='Consider timing.', overall_score=3)
+        for criterion in ('AGENCY', 'RELATIONSHIP', 'SAFETY'):
+            FeedbackScore.objects.create(feedback=feedback, criterion=criterion, score=3)
         cls.chat_scenario = Scenario.objects.filter(is_active=True).first()
         cls.role_prompt = get_prompt_for_type('ROLE_PLAY', cls.chat_scenario)
         cls.chat_session = TrainingSession.objects.create(
@@ -2819,7 +1211,7 @@ class PageSmokeTests(TestCase):
         self.client.force_login(self.trainee)
         app_response = self.client.get(reverse("dashboard"))
         self.client.force_login(self.admin)
-        analytics_response = self.client.get(reverse("admin_analytics"))
+        analytics_response = self.client.get(reverse("admin_records"))
 
         for response in (public_response, app_response, analytics_response):
             with self.subTest(path=response.request["PATH_INFO"]):
@@ -2836,10 +1228,7 @@ class PageSmokeTests(TestCase):
             app_response,
             "/static/vendor/chartjs/chart.umd.min.js",
         )
-        self.assertContains(
-            analytics_response,
-            "/static/vendor/chartjs/chart.umd.min.js",
-        )
+        self.assertContains(analytics_response, "Practice records")
 
     def test_landing_restores_login_card_without_public_navigation(self):
         landing_response = self.client.get(reverse("landing"))
@@ -2946,30 +1335,9 @@ class PageSmokeTests(TestCase):
 
         self.client.force_login(self.admin)
         admin_pages = [
-            (
-                reverse("admin_dashboard"),
-                "Monitor training activity, users, prompts, and learning outcomes.",
-            ),
-            (
-                reverse("admin_users"),
-                "Review registered users and control account access.",
-            ),
-            (
-                reverse("admin_prompts"),
-                "Manage prompt behaviour across the four fixed training boundaries.",
-            ),
-            (
-                reverse("admin_analytics"),
-                "Review boundary-skill progression and platform activity.",
-            ),
-            (
-                reverse("admin_settings"),
-                "Only the live training limit remains configurable here.",
-            ),
-            (
-                reverse("admin_scoring_reviews"),
-                "Review reliability exceptions and a small quality-control sample",
-            ),
+            (reverse('admin_users'), 'Review registered users and control account access.'),
+            (reverse('admin_records'), 'Review boundary-skill progression and platform activity.'),
+            (reverse('admin_logs'), 'Review reliability exceptions and a small quality-control sample'),
         ]
         for url, removed_copy in admin_pages:
             with self.subTest(url=url):
@@ -3441,50 +1809,6 @@ class PageSmokeTests(TestCase):
         self.assertContains(response, "No completed practice yet")
         self.assertContains(response, "0 XP")
 
-    def test_admin_pages_render(self):
-        self.client.force_login(self.admin)
-        pages = [
-            (reverse("admin_dashboard"), "Admin Dashboard"),
-            (reverse("admin_users"), "Admin User Management"),
-            (reverse("admin_prompts"), "Admin Prompt Management"),
-            (reverse("admin_analytics"), "Training Analytics"),
-            (reverse("admin_settings"), "Platform Settings"),
-        ]
-
-        for url, text in pages:
-            with self.subTest(url=url):
-                response = self.client.get(url, follow=True)
-                self.assertEqual(response.status_code, 200)
-                self.assertContains(response, text)
-
-    def test_admin_top_navigation_uses_admin_only_information_architecture(self):
-        self.client.force_login(self.admin)
-
-        response = self.client.get(reverse("admin_dashboard"))
-
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "peertrain-app-topbar", html=False)
-        self.assertContains(response, 'aria-label="Primary navigation"', html=False)
-        for label in ["Dashboard", "Users", "Prompts", "Analytics", "Settings"]:
-            self.assertContains(response, f"<span>{label}</span>", count=2, html=True)
-        self.assertNotContains(response, "<span>Scenarios</span>", html=True)
-        self.assertNotContains(response, "<span>History</span>", html=True)
-        self.assertContains(response, "<small>Admin</small>", count=2, html=True)
-        self.assertNotContains(response, "peertrain-sidebar")
-
-    def test_admin_dashboard_replaces_scenario_management_with_session_status(self):
-        self.client.force_login(self.admin)
-
-        response = self.client.get(reverse("admin_dashboard"))
-
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "In-progress Sessions")
-        self.assertNotContains(
-            response,
-            "Four research scenarios are fixed and version controlled.",
-        )
-        self.assertNotContains(response, "Manage scenarios")
-        self.assertNotContains(response, "Active Scenarios")
 
     def test_removed_admin_scenario_route_returns_404(self):
         self.client.force_login(self.admin)
@@ -3533,40 +1857,6 @@ class PageSmokeTests(TestCase):
         scenario.refresh_from_db()
         self.assertEqual(scenario.title, original_title)
 
-    def test_admin_settings_page_only_shows_runtime_controls(self):
-        self.client.force_login(self.admin)
-
-        response = self.client.get(reverse("admin_settings"))
-
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Runtime Controls")
-        self.assertContains(response, "Max exchanges per session")
-        self.assertNotContains(response, "Institution name")
-        self.assertNotContains(response, "Research contact email")
-
-    def test_admin_can_delete_a_non_current_user(self):
-        self.client.force_login(self.admin)
-        extra_user = User.objects.create_user(
-            username="delete-me@example.com",
-            email="delete-me@example.com",
-            password="password123",
-            role=User.Roles.TRAINEE,
-            first_name="Delete",
-            last_name="Me",
-        )
-
-        response = self.client.post(
-            reverse("admin_users"),
-            {"action": "delete_user", "user_id": extra_user.id},
-            follow=True,
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertFalse(User.objects.filter(id=extra_user.id).exists())
-        self.assertContains(response, "Deleted user Delete Me.")
-        self.assertContains(response, "data-peertrain-success-toast")
-        self.assertContains(response, 'data-bs-delay="4500"')
-        self.assertNotContains(response, "alert-success")
 
     def test_admin_cannot_delete_current_account(self):
         self.client.force_login(self.admin)

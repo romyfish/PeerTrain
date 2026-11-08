@@ -72,7 +72,11 @@
     let data;
     try { data = await response.json(); }
     catch { throw new Error('The request could not be completed. Please reload and try again.'); }
-    if (!response.ok || !data.ok) throw new Error(data.error || 'Please try again.');
+    if (!response.ok || !data.ok) {
+      const error = new Error(data.error || 'Please try again.');
+      error.data = data;
+      throw error;
+    }
     return data;
   };
   notesForm.addEventListener('submit', async event => {
@@ -117,7 +121,15 @@
       });
       input.value = ''; chatForm.querySelector('[name=request_id]').value = crypto.randomUUID();
       log.scrollTop = log.scrollHeight;
-    } catch (error) { errorBox.textContent = error.message; input.value = content; }
+    } catch (error) {
+      errorBox.textContent = error.message;
+      if (error.data?.code === 'reflection_attention') {
+        log.replaceChildren();
+        error.data.messages.forEach(message => log.append(messageNode(message.sender_type, message.content)));
+        chatForm.querySelector('fieldset').disabled = true;
+        input.value = '';
+      } else input.value = content;
+    }
     finally {
       pendingUser.remove(); pendingAi.remove(); log.removeAttribute('aria-busy');
       button.disabled = false; input.readOnly = false; chatPending = false;

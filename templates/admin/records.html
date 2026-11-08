@@ -1,0 +1,14 @@
+{% extends "base_app.html" %}
+{% block content %}
+<h1>{% if logs %}Interaction logs{% else %}Practice records{% endif %}</h1>
+{% if selected_user %}<p>{{ selected_user.full_name_or_email }}</p>{% endif %}
+{% regroup sessions by user as user_groups %}
+{% for group in user_groups %}
+<section class="card p-3 mb-3"><h2>{{ group.grouper.full_name_or_email }}</h2>
+<div class="table-responsive"><table class="table"><thead><tr><th>Session</th><th>Scenario</th><th>Persona</th><th>Date</th><th>Status</th><th>Completed turns</th></tr></thead><tbody>
+{% for session in group.list %}
+<tr><td><a href="{% url 'admin_record_detail' session.id %}">Session {{ session.id }}</a></td><td>{{ session.scenario.display_title }}</td><td>{{ session.get_persona_display }}</td><td>{{ session.start_time|date:"Y-m-d H:i:s T" }}</td><td>{{ session.get_status_display }}{% if session.failure_category %} — {{ session.failure_category }}{% endif %}</td><td>{{ session.completed_turns }}</td></tr>
+{% if logs %}<tr><td colspan="6"><ol>{% for event in session.interaction_logs.all %}<li>{{ event.created_at|date:"Y-m-d H:i:s.u T" }} — {{ event.event_type }} — trainee turn {{ event.trainee_turn_number }}{% if event.latest_message_id %} — <a href="{% url 'admin_record_detail' session.id %}#message-{{ event.latest_message_id }}">Message {{ event.latest_message_id }}</a>{% endif %}</li>{% endfor %}</ol></td></tr>{% endif %}
+{% endfor %}</tbody></table></div></section>
+{% empty %}<p>No records available.</p>{% endfor %}
+{% endblock %}

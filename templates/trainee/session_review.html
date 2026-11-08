@@ -26,6 +26,7 @@
           <strong class="peertrain-assessment-title peertrain-assessment-{{ overall_status.tone }}">{{ overall_status.label }}</strong>
         </span>
         </div>
+        {% if session.review_attention_at %}<p role="alert">The session overview requires researcher attention. Your conversation and saved feedback are available below. Please contact the researcher.</p>{% endif %}
         <div class="review-overview-content">
         {% if feedback.overview %}<p class="review-overall-copy">{{ feedback.overview|boundary_highlights }}</p>{% endif %}
         <section class="review-summary-card review-summary-strengths"><h4><i class="bi bi-check-circle" aria-hidden="true"></i> What worked</h4>
@@ -69,12 +70,14 @@
           </article>
           {% endfor %}
         </div>
+        {% if session.reflection_attention_at %}<p role="alert">Reflection AI is unavailable. Your message has been saved. Please contact the researcher before continuing.</p>{% endif %}
         <form method="post" action="{% url 'session_review' session.id %}" data-reflection-form>
+          <fieldset {% if session.reflection_attention_at %}disabled{% endif %}>
           {% csrf_token %}<input type="hidden" name="action" value="reflect">
           <input type="hidden" name="request_id" value="{{ reflection_request_id }}">
           <label class="visually-hidden" for="reflection-input">Ask or share your thoughts…</label>
           <div class="review-input-row"><textarea id="reflection-input" name="content" rows="1" maxlength="12000" required placeholder="Ask or share your thoughts…"></textarea><button type="submit" class="btn peertrain-btn-primary review-reflection-send" aria-label="Send reflection"><i class="bi bi-send" aria-hidden="true"></i></button></div>
-          <p data-reflection-error role="alert"></p>
+          <p data-reflection-error role="alert"></p></fieldset>
         </form>
       </section>
       <section class="review-notes" id="notes-panel" role="tabpanel" aria-labelledby="notes-tab" hidden>

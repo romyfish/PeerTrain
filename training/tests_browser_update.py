@@ -2,6 +2,7 @@
 
 Uses installed Edge/Chrome; no browser download or production credentials needed.
 """
+from concurrent.futures import ThreadPoolExecutor
 from importlib.util import find_spec
 from pathlib import Path
 import tempfile
@@ -16,7 +17,7 @@ from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from django.test import override_settings
 from django.urls import reverse
 
-from training.models import Feedback, Message, Scenario, TrainingSession, TurnAssessment
+from training.models import Feedback, Message, Scenario, TrainingSession, TurnAssessment, LiveFeedbackEvent
 from training.services.assessment import ReflectionResult
 
 BROWSER = next((str(p) for p in (
@@ -29,6 +30,53 @@ BROWSER = next((str(p) for p in (
 @override_settings(OPENAI_API_KEY='', GEMINI_API_KEY='',
                    PASSWORD_HASHERS=['django.contrib.auth.hashers.MD5PasswordHasher'])
 class BrowserUpdateTests(StaticLiveServerTestCase):
+    def test_manual_feedback_logging_and_paused_controls_on_desktop_and_mobile(self):
+        from playwright.sync_api import sync_playwright, expect
+        user = get_user_model().objects.create_user(username='log-browser', email='log-browser@example.com', role='TRAINEE')
+        scenario = Scenario.objects.create(title='Logging', boundary_type='AGENCY', estimated_duration_min=10)
+        session = TrainingSession.objects.create(user=user, scenario=scenario, persona='pso')
+        Message.objects.create(session=session, sender_type='AI', content='I feel uncertain about where to begin.')
+        self.client.force_login(user)
+        cookie = self.client.cookies[settings.SESSION_COOKIE_NAME].value
+        url = self.live_server_url + reverse('chat', args=[session.pk])
+        def query(call):
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                return executor.submit(call).result()
+
+        with sync_playwright() as driver:
+            browser = driver.chromium.launch(executable_path=BROWSER, headless=True)
+            context = browser.new_context(viewport={'width': 1440, 'height': 1000})
+            context.add_cookies([{'name': settings.SESSION_COOKIE_NAME, 'value': cookie, 'url': self.live_server_url}])
+            page = context.new_page()
+            page.goto(url)
+            self.assertEqual(query(lambda: LiveFeedbackEvent.objects.count()), 0)
+            for width in (1440, 390):
+                page.set_viewport_size({'width': width, 'height': 1000})
+                toggle = page.locator('[data-boundary-coach-toggle]').last if width >= 1200 else page.locator('.peertrain-boundary-coach-mobile-open')
+                with page.expect_response('**/live-feedback-events/'):
+                    toggle.click()
+                expand = page.locator('[data-boundary-coach-toggle]').first if width >= 1200 else toggle
+                with page.expect_response('**/live-feedback-events/'):
+                    expand.click()
+                page.reload()
+                expected = ['CLOSE', 'OPEN'] if width == 1440 else ['CLOSE', 'OPEN', 'CLOSE', 'OPEN']
+                self.assertEqual(query(lambda: list(LiveFeedbackEvent.objects.values_list('event_type', flat=True))), expected)
+            # A real failed turn keeps the accepted message visible and disables progression.
+            with patch('training.services.assessment.task_call', side_effect=RuntimeError('Unavailable')):
+                page.locator('#id_content').fill('What feels important to you?')
+                page.locator('[data-chat-send]').click()
+                expect(page.locator('[data-chat-error]')).to_contain_text('Practice temporarily paused')
+            expect(page.locator('#peertrain-chat-log')).to_contain_text('What feels important to you?')
+            expect(page.locator('#id_content')).to_be_disabled()
+            expect(page.locator('[data-chat-finish]')).to_be_disabled()
+            page.reload()
+            expect(page.get_by_role('alert').filter(has_text='Practice temporarily paused')).to_be_visible()
+            expect(page.locator('[data-chat-send]')).to_be_disabled()
+            self.assertEqual(query(lambda: session.messages.filter(sender_type='USER').count()), 1)
+            self.assertEqual(query(lambda: session.messages.filter(sender_type='AI').count()), 1)
+            self.assertEqual(query(lambda: LiveFeedbackEvent.objects.count()), 4)
+            browser.close()
+
     def test_all_scenario_sidebars_review_tabs_scroll_reflection_and_notes(self):
         from playwright.sync_api import sync_playwright, expect
         user = get_user_model().objects.create_user(username='browser', email='browser@example.com', password='test', role='TRAINEE')
