@@ -69,7 +69,7 @@
 .reflection-pending .peertrain-typing-dot { background: #687585; display: inline-block; }
 .review-notes form { flex: 1; display: flex; flex-direction: column; gap: .75rem; min-height: 0; }
 .review-notes textarea { flex: 1; min-height: 80px; overflow: auto; resize: none; }
-.boundary-reference-agency { color: #1769e0; }
+.boundary-reference-agency { color: var(--scenario-emotional); }
 .boundary-reference-relationship { color: #b86100; }
 .boundary-reference-safety { color: #087f70; }
 @media (min-width: 901px) {

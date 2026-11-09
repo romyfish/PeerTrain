@@ -300,6 +300,28 @@
 }
 
 .peertrain-session-row:hover { color: #1769e0; background: #fafcff; }
+.peertrain-session-row[data-boundary="agency"] {
+  --session-accent: var(--scenario-emotional);
+  --session-surface: var(--scenario-emotional-surface);
+}
+.peertrain-session-row[data-boundary="relationship"] {
+  --session-accent: var(--scenario-burnout);
+  --session-surface: var(--scenario-burnout-surface);
+}
+.peertrain-session-row[data-boundary="safety"] {
+  --session-accent: var(--scenario-referral);
+  --session-surface: var(--scenario-referral-surface);
+}
+.peertrain-session-row[data-boundary] { background: var(--session-surface, #fff); }
+.peertrain-session-row[data-boundary]:hover,
+.peertrain-session-row[data-boundary]:focus-visible {
+  color: #172033;
+  background: color-mix(in srgb, var(--session-surface, #fafcff) 92%, var(--session-accent, #1769e0) 8%);
+}
+.peertrain-session-row[data-boundary] .peertrain-session-icon {
+  color: var(--session-accent, #1769e0);
+  background: color-mix(in srgb, var(--session-accent, #1769e0) 12%, #fff);
+}
 .peertrain-session-row strong,
 .peertrain-session-row small { display: block; }
 .peertrain-session-row small { margin-top: 0.2rem; color: #7b8698; font-size: 0.68rem; }

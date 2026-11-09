@@ -115,9 +115,18 @@
     chatForm?.setAttribute("aria-busy", String(busy));
   };
 
+  const showUserMessageTime = (time) => {
+    const sentAt = new Date();
+    time.dateTime = sentAt.toISOString();
+    time.textContent = sentAt.toLocaleTimeString([], {
+      hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+    });
+  };
+
   const createOptimisticUserMessage = (content, isGeneratedReply) => {
     const article = document.createElement("article");
-    article.className = "peertrain-chat-message peertrain-chat-message-user peertrain-chat-message-pending-user";
+    article.className = "peertrain-chat-message peertrain-chat-message-user";
+    article.classList.toggle("peertrain-chat-message-pending-user", isGeneratedReply);
     article.dataset.pendingUser = "true";
 
     const stack = document.createElement("div");
@@ -127,7 +136,11 @@
     bubble.textContent = content;
     const time = document.createElement("time");
     time.className = "peertrain-chat-message-time";
-    time.textContent = isGeneratedReply ? "Preparing test reply" : "Sending";
+    if (isGeneratedReply) {
+      time.textContent = "Preparing test reply";
+    } else {
+      showUserMessageTime(time);
+    }
 
     stack.append(bubble, time);
     article.append(stack);
@@ -145,12 +158,13 @@
     return pendingMessage;
   };
 
-  const updateOptimisticUserMessage = (pendingElement, content, status = "Sending") => {
+  const updateOptimisticUserMessage = (pendingElement, content) => {
     if (!pendingElement) return;
     const bubble = pendingElement.querySelector(".peertrain-chat-message-bubble");
     const time = pendingElement.querySelector(".peertrain-chat-message-time");
     if (bubble) bubble.textContent = content;
-    if (time) time.textContent = status;
+    pendingElement.classList.remove("peertrain-chat-message-pending-user");
+    if (time) showUserMessageTime(time);
   };
 
   const replacePendingWithHtml = (pendingElement, html) => {
@@ -527,8 +541,8 @@
     const dialogMessage = document.querySelector("[data-session-dialog-message]");
     dialogMessage.textContent = ending
       ? (currentUserTurns < 4
-        ? "You can still review your conversation, but the feedback may be based on limited evidence."
-        : "End your conversation and prepare your session review?")
+        ? "If you end the practice now, you can still review your conversation, but the feedback may be based on limited evidence."
+        : "If you're sure you've finished your practice, we'll prepare your session review next.")
       : "Your practice session hasn't ended yet. Leaving now may interrupt your session and lose the full session review.\n\nPlease select End session before leaving.";
     if (!ending) {
       const emphasis = document.createElement("strong");

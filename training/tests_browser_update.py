@@ -30,6 +30,69 @@ BROWSER = next((str(p) for p in (
 @override_settings(OPENAI_API_KEY='', GEMINI_API_KEY='',
                    PASSWORD_HASHERS=['django.contrib.auth.hashers.MD5PasswordHasher'])
 class BrowserUpdateTests(StaticLiveServerTestCase):
+    @override_settings(DEBUG=True)
+    def test_user_message_looks_sent_while_waiting_for_ai_and_feedback(self):
+        import re
+        from playwright.sync_api import sync_playwright, expect
+
+        user = get_user_model().objects.create_user(username='message-browser', email='alex.chen@university.ac.uk', role='TRAINEE')
+        scenario = Scenario.objects.create(title='Message phases', boundary_type='AGENCY', estimated_duration_min=10)
+        session = TrainingSession.objects.create(user=user, scenario=scenario, persona='pso')
+        Message.objects.create(session=session, sender_type='AI', content='Where can I begin?')
+        self.client.force_login(user)
+        cookie = self.client.cookies[settings.SESSION_COOKIE_NAME].value
+        with sync_playwright() as driver:
+            browser = driver.chromium.launch(executable_path=BROWSER, headless=True)
+            context = browser.new_context(viewport={'width': 1440, 'height': 900})
+            context.add_cookies([{'name': settings.SESSION_COOKIE_NAME, 'value': cookie, 'url': self.live_server_url}])
+            page = context.new_page()
+            url = self.live_server_url + reverse('chat', args=[session.pk])
+            page.goto(url)
+            held = []
+            page.route(url, lambda route: held.append(route))
+            composer = page.locator('#id_content')
+            composer.fill('What would feel helpful?')
+            with page.expect_request(url):
+                page.locator('[data-chat-send]').click()
+            user_message = page.locator('[data-pending-user]')
+            expect(user_message).to_contain_text('What would feel helpful?')
+            expect(user_message.locator('time')).to_have_text(re.compile(r'^\d{2}:\d{2}$'))
+            expect(user_message.locator('time')).to_have_attribute('datetime', re.compile(r'^\d{4}-'))
+            expect(user_message.locator('.peertrain-chat-message-bubble')).to_have_css('opacity', '1')
+            expect(page.locator('[data-pending-ai]')).to_contain_text('Responding')
+            expect(page.locator('[data-chat-send]')).to_be_disabled()
+            held.pop().fulfill(status=503, json={'ok': False, 'error': 'Connection interrupted.'})
+            expect(page.locator('[data-chat-error]')).to_contain_text('Connection interrupted.')
+            expect(user_message).to_have_count(0)
+            expect(composer).to_have_value('What would feel helpful?')
+            expect(page.locator('[data-chat-send]')).to_be_enabled()
+
+            page.locator('.peertrain-test-replies-toggle').click()
+            with page.expect_request(url):
+                page.locator('[data-chat-action="auto_helpful"]').click()
+            expect(user_message).to_contain_text('Preparing test reply')
+            expect(page.locator('[data-pending-ai]')).to_have_count(0)
+            with page.expect_request(url):
+                held.pop().fulfill(json={'ok': True, 'generated_content': 'Would you like to tell me more?', 'response_source': 'OPENAI'})
+            expect(user_message).to_contain_text('Would you like to tell me more?')
+            expect(user_message.locator('time')).to_have_text(re.compile(r'^\d{2}:\d{2}$'))
+            expect(user_message.locator('.peertrain-chat-message-bubble')).to_have_css('opacity', '1')
+            expect(page.locator('[data-pending-ai]')).to_contain_text('Responding')
+            held.pop().fulfill(json={
+                'ok': True, 'user_turns': 1, 'can_send': True,
+                'user_message_html': '<article data-chat-message data-message-id="101" class="peertrain-chat-message-user">Would you like to tell me more?</article>',
+                'ai_message_html': '<article data-chat-message data-message-id="102">Thank you for listening.</article>',
+                'boundary_coach_html': '<div data-boundary-coach-live>Feedback is ready.</div>',
+            })
+            expect(page.locator('[data-pending-user]')).to_have_count(0)
+            expect(page.locator('[data-pending-ai]')).to_have_count(0)
+            expect(page.locator('[data-message-id="101"]')).to_have_count(1)
+            expect(page.locator('[data-message-id="102"]')).to_contain_text('Thank you for listening.')
+            expect(page.locator('[data-boundary-coach-live]')).to_contain_text('Feedback is ready.')
+            expect(composer).to_have_value('')
+            expect(page.locator('[data-chat-send]')).to_be_enabled()
+            browser.close()
+
     def test_session_navigation_completion_errors_and_review_transition(self):
         from playwright.sync_api import sync_playwright, expect, Error
 

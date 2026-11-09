@@ -2,7 +2,7 @@
 {% load static %}
 
 {% block extra_head %}
-  <link href="{% static 'css/learning.css' %}?v=20261027-2" rel="stylesheet">
+  <link href="{% static 'css/learning.css' %}?v=20261109-1" rel="stylesheet">
 {% endblock %}
 
 {% block content %}
@@ -41,7 +41,7 @@
       {% if sessions %}
         <div class="peertrain-session-list">
           {% for session in sessions %}
-            <a href="{% url 'history_detail' session.id %}" class="peertrain-session-row">
+            <a href="{% url 'history_detail' session.id %}" class="peertrain-session-row" data-boundary="{{ session.scenario.boundary_type|lower }}">
               <span class="peertrain-session-icon"><i class="bi bi-file-earmark-text"></i></span>
               <span class="flex-grow-1">
                 <strong>{{ session.history_title|default:session.scenario.title }}</strong>
