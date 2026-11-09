@@ -266,16 +266,34 @@ def saved_review(session):
 
 def reflection_context(session, feedback, latest):
     # No private persona background or private role-play cues go into reflection.
-    evidence = [{
-        'message_id': row['trainee_message_id'], 'feedback': row['feedback_text'],
-        'observed_evidence': row['record'].get('observed_evidence'),
-    } for row in assessment_records(session)]
+    from training.services.review import review_timeline
+    timeline = review_timeline(session, feedback)
+    evidence = []
+    examples = []
+    for turn in timeline:
+        assessment = turn['assessment']
+        if assessment:
+            evidence.append({
+                'turn': turn['turn_label'], 'feedback': assessment.feedback_text,
+                'observed_evidence': assessment.record.get('observed_evidence'),
+            })
+        for example in turn['examples']:
+            fields = ('message_excerpt', 'why_it_matters', 'better_reply')
+            values = {key: example.get(key, '') if isinstance(example, dict) else getattr(example, key, '')
+                      for key in fields}
+            examples.append({
+                'turn': turn['turn_label'], **values,
+            })
+    public_transcript = [{
+        'turn': turn['turn_label'],
+        'speaker': 'trainee' if turn['message'].sender_type == 'USER' else 'help-seeker',
+        'text': turn['message'].content,
+    } for turn in timeline]
     return dict(scenario_name=session.scenario.boundary_type.title(), public_scenario_context='See disclosed transcript.',
-        session_transcript=json.dumps(transcript(session), ensure_ascii=False),
+        session_transcript=json.dumps(public_transcript, ensure_ascii=False),
         assessment_records=json.dumps(evidence, ensure_ascii=False),
         visible_overall_feedback=(feedback.overview + '\n' + feedback.strengths + '\n' + feedback.improvements) if feedback else '',
-        visible_review_examples=json.dumps(list(feedback.review_items.values(
-            'message_id', 'message_excerpt', 'why_it_matters', 'better_reply')) if feedback else [], ensure_ascii=False),
+        visible_review_examples=json.dumps(examples, ensure_ascii=False),
         reflection_chat_history=json.dumps(list(session.reflection_messages.values('sender_type', 'content')), ensure_ascii=False),
         latest_reflection_message=latest)
 

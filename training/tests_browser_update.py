@@ -17,7 +17,7 @@ from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from django.test import override_settings
 from django.urls import reverse
 
-from training.models import Feedback, Message, Scenario, TrainingSession, TurnAssessment, LiveFeedbackEvent
+from training.models import Feedback, FeedbackReviewItem, Message, Scenario, TrainingSession, TurnAssessment, LiveFeedbackEvent
 from training.services.assessment import ReflectionResult
 
 BROWSER = next((str(p) for p in (
@@ -30,6 +30,97 @@ BROWSER = next((str(p) for p in (
 @override_settings(OPENAI_API_KEY='', GEMINI_API_KEY='',
                    PASSWORD_HASHERS=['django.contrib.auth.hashers.MD5PasswordHasher'])
 class BrowserUpdateTests(StaticLiveServerTestCase):
+    def test_review_alternative_navigation_scopes_scroll_and_supports_keyboard_and_reduced_motion(self):
+        from playwright.sync_api import sync_playwright, expect
+        user = get_user_model().objects.create_user(username='alternative-browser', role='TRAINEE')
+        scenario = Scenario.objects.create(title='Navigation', boundary_type='AGENCY', estimated_duration_min=10)
+        session = TrainingSession.objects.create(user=user, scenario=scenario, persona='pso', status='COMPLETED')
+        feedback = Feedback.objects.create(session=session, strengths='Saved strengths', improvements='Saved considerations')
+        Message.objects.create(session=session, sender_type='AI', content='Opening disclosure. ' * 20)
+        for number in range(1, 19):
+            message = Message.objects.create(session=session, sender_type='USER', content=f'Reply {number}. ' * 25)
+            if number in (2, 13):
+                for index in range(2 if number == 2 else 1):
+                    FeedbackReviewItem.objects.create(feedback=feedback, message=message, turn_index=99,
+                        better_reply=f'Saved alternative {number}.{index}')
+            if number == 8:
+                TurnAssessment.objects.create(trainee_message=message,
+                    record={'alternative_reply': 'Historical assessed alternative'})
+            Message.objects.create(session=session, sender_type='AI', content='Help-seeker response. ' * 20)
+        empty = TrainingSession.objects.create(user=user, scenario=scenario, persona='pso', status='COMPLETED')
+        Feedback.objects.create(session=empty, strengths='Saved strengths', improvements='Saved considerations')
+        Message.objects.create(session=empty, sender_type='USER', content='No alternative needed.')
+        self.client.force_login(user)
+        cookie = self.client.cookies[settings.SESSION_COOKIE_NAME].value
+        with sync_playwright() as driver:
+            browser = driver.chromium.launch(executable_path=BROWSER, headless=True)
+            context = browser.new_context(viewport={'width': 1440, 'height': 1000})
+            context.add_cookies([{'name': settings.SESSION_COOKIE_NAME, 'value': cookie, 'url': self.live_server_url}])
+            page = context.new_page()
+            errors = []
+            page.on('pageerror', lambda error: errors.append(str(error)))
+            for width, height, motion in ((1440, 1000, 'no-preference'), (1100, 650, 'reduce'), (390, 1000, 'reduce')):
+                page.set_viewport_size({'width': width, 'height': height})
+                page.emulate_media(reduced_motion=motion)
+                page.goto(self.live_server_url + reverse('session_review', args=[session.pk]))
+                nav = page.get_by_role('navigation', name='Alternative replies to consider')
+                expect(nav).to_be_visible()
+                expect(nav.locator('button')).to_have_text(['Turn 2', 'Turn 8', 'Turn 13'])
+                expect(nav.locator('.review-alternative-count')).to_have_text('(4)')
+                heading_box = nav.locator('h4').bounding_box()
+                buttons_box = nav.locator('.review-alternative-buttons').bounding_box()
+                if width >= 1100:
+                    assert buttons_box['x'] >= heading_box['x'] + heading_box['width']
+                    assert abs(buttons_box['y'] + buttons_box['height'] / 2 - heading_box['y'] - heading_box['height'] / 2) < 2
+                card = page.locator('.review-alternative').first
+                expect(nav.locator('button').first).to_have_css('background-color', card.evaluate('el => getComputedStyle(el).backgroundColor'))
+                expect(nav.locator('button').first).to_have_css('border-top-color', card.evaluate('el => getComputedStyle(el).borderTopColor'))
+                assert page.locator('#review-transcript').evaluate('''el => {
+                    const transcript = el.getBoundingClientRect();
+                    const container = el.closest('.review-conversation');
+                    const card = container.getBoundingClientRect();
+                    const padding = parseFloat(getComputedStyle(container).paddingBottom);
+                    return transcript.height > 0 && transcript.bottom <= card.bottom - padding + 1;
+                }''')
+                expect(page.locator('.review-alternative strong')).to_have_text(['An alternative reply to consider'] * 4)
+                expect(page.locator('#turn-2')).to_have_css('font-weight', '400')
+                expect(page.locator('#turn-2')).to_have_css('border-top-width', '1px')
+                expect(page.locator('#opening')).to_have_css('font-weight', '400')
+                assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+                page.locator('#review-transcript').evaluate('''el => {
+                    el.scrollTop = el.scrollHeight;
+                    const scroll = el.scrollTo.bind(el);
+                    el.scrollTo = options => { window.lastReviewScroll = options; scroll(options); };
+                }''')
+                for number, keyboard in ((8, False), (2, True), (13, True)):
+                    button = nav.get_by_role('button', name=f'Turn {number}', exact=True)
+                    button.focus()
+                    before = page.evaluate('({x: scrollX, y: scrollY})')
+                    nav_top = nav.bounding_box()['y']
+                    if keyboard:
+                        page.keyboard.press('Enter' if number == 2 else 'Space')
+                    else:
+                        button.click()
+                    card = page.locator(f'[data-alternative-card-turn="{number}"]').first
+                    expect(card).to_be_focused()
+                    expect(card).to_have_class('review-alternative review-alternative-highlight')
+                    page.wait_for_function('''number => {
+                        const container = document.querySelector('#review-transcript');
+                        const card = container.querySelector(`[data-alternative-card-turn="${number}"]`);
+                        const bounds = container.getBoundingClientRect();
+                        const target = card.getBoundingClientRect();
+                        return Math.abs((target.top + target.bottom - bounds.top - bounds.bottom) / 2) < 3;
+                    }''', arg=number)
+                    assert page.evaluate('({x: scrollX, y: scrollY})') == before
+                    assert abs(nav.bounding_box()['y'] - nav_top) < 1
+                    assert page.evaluate('window.lastReviewScroll.behavior') == ('instant' if motion == 'reduce' else 'smooth')
+                expect(card).not_to_have_class('review-alternative review-alternative-highlight', timeout=4000)
+                page.goto(self.live_server_url + reverse('session_review', args=[empty.pk]))
+                expect(page.locator('.review-alternative-nav')).to_have_count(0)
+                expect(page.locator('#review-transcript')).to_be_visible()
+            assert not errors, errors
+            browser.close()
+
     def test_manual_feedback_logging_and_paused_controls_on_desktop_and_mobile(self):
         from playwright.sync_api import sync_playwright, expect
         user = get_user_model().objects.create_user(username='log-browser', email='log-browser@example.com', role='TRAINEE')

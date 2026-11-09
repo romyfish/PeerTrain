@@ -1790,7 +1790,7 @@ class PageSmokeTests(TestCase):
         self.assertContains(response, "I would keep the warm tone")
         self.assertContains(response, "review-transcript")
         self.assertContains(response, "peertrain-ai-avatar")
-        self.assertContains(response, "review.css?v=20261103-5")
+        self.assertContains(response, "review.css?v=20261109-3")
 
     def test_progress_page_explains_empty_state_for_new_trainee(self):
         empty_trainee = User.objects.create_user(

@@ -5,7 +5,7 @@
 {% block extra_head %}
 <link href="{% static 'css/chat.css' %}?v=20261103-4" rel="stylesheet">
 <link href="{% static 'css/assessment.css' %}" rel="stylesheet">
-<link href="{% static 'css/review.css' %}?v=20261103-5" rel="stylesheet">
+<link href="{% static 'css/review.css' %}?v=20261109-3" rel="stylesheet">
 {% endblock %}
 {% block content %}
 <div class="peertrain-review {{ scenario_meta.theme_class }}">
@@ -39,9 +39,18 @@
       </section>
       <section class="review-conversation" aria-labelledby="conversation-heading">
       <h3 id="conversation-heading">Conversation review</h3>
-      <div class="review-transcript" tabindex="0" aria-label="Conversation review">
+      {% if alternative_turns %}
+      <nav class="review-alternative-nav" aria-labelledby="alternative-nav-heading">
+        <h4 id="alternative-nav-heading"><i class="bi bi-lightbulb" aria-hidden="true"></i> Alternative replies to consider <span class="review-alternative-count">({{ alternative_count }})</span></h4>
+        <div class="review-alternative-buttons">
+          {% for turn in alternative_turns %}<button type="button" class="review-turn-link" data-alternative-turn="{{ turn.turn_number }}" aria-controls="review-transcript">{{ turn.turn_label }}</button>{% endfor %}
+        </div>
+      </nav>
+      {% endif %}
+      <div id="review-transcript" class="review-transcript" tabindex="0" aria-label="Conversation review">
         {% for turn in timeline %}
-          <div id="turn-{{ turn.message.id }}">
+          {% if turn.show_label %}<p class="review-turn-label{% if not turn.turn_number %} review-opening-label{% endif %}" id="{% if turn.turn_number %}turn-{{ turn.turn_number }}{% else %}opening{% endif %}">{{ turn.turn_label }}</p>{% endif %}
+          <div>
             {% include "trainee/includes/chat_message.html" with message=turn.message %}
           </div>
           {% if turn.message.sender_type == 'USER' %}
@@ -92,4 +101,4 @@
   </div>
 </div>
 {% endblock %}
-{% block extra_scripts %}<script src="{% static 'js/review.js' %}?v=20261103-4"></script>{% endblock %}
+{% block extra_scripts %}<script src="{% static 'js/review.js' %}?v=20261109-1"></script>{% endblock %}

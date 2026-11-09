@@ -1,14 +1,16 @@
-.peertrain-review { --chat-user-bubble: #5273e0; --chat-ai-surface: #e6edf6; color: #252a32; }
+.peertrain-review { --chat-user-bubble: #5273e0; --chat-ai-surface: #e6edf6; --review-alternative-surface: #faf5e8; --review-alternative-border: #e4d6af; color: #252a32; }
 .peertrain-review h1 { margin: 0 0 .7rem; font-size: clamp(1.5rem, 2.4vw, 2rem); }
 .peertrain-review > header > p { margin-bottom: 0; }
 .peertrain-review h2 { font-size: 1.4rem; }
-.peertrain-review h3 { font-size: 1.1rem; margin: .3rem 0 1rem; }
+.peertrain-review h3 { font-size: 1.1rem; }
 .review-title-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .review-title-row a { flex-shrink: 0; }
 .review-columns { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 1.5rem; }
 .review-feedback, .review-reflection { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: .8rem; }
 .review-overview, .review-conversation, .review-ai, .review-notes { background: #fff; border: 1px solid #e2e6ec; border-radius: 16px; padding: 1.25rem; }
 .review-overview, .review-conversation { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+.review-conversation { overflow: hidden; }
+.review-conversation > h3 { flex-shrink: 0; }
 .review-overview-content { overflow: auto; min-height: 0; flex: 1; }
 .review-overview-heading { display: flex; align-items: center; justify-content: flex-start; flex-wrap: wrap; gap: .5rem 1rem; margin-bottom: .8rem; }
 .review-overview-heading h3 { margin: 0; }
@@ -27,12 +29,23 @@
 .review-summary-card li + li { margin-top: .35rem; }
 .review-summary-strengths { background: #f2faf6; border-color: #cce7da; }
 .review-summary-considerations { background: #fdf9ef; border-color: #ead9ae; margin-bottom: 0;}
-.review-transcript { overflow: auto; min-height: 180px; flex: 1; padding: .8rem; background: #f7f9fc; border-radius: 12px; }
+.review-transcript { overflow: auto; min-height: 0; min-width: 0; flex: 1; padding: .8rem; background: #f7f9fc; border-radius: 12px; }
 .review-transcript .peertrain-chat-message { margin: .7rem 0; }
+.review-turn-label, .review-turn-link { color: var(--peertrain-primary); border: 1px solid var(--peertrain-primary); background: transparent; font-size: .875rem; font-weight: 400; padding: .15rem .5rem; border-radius: 5px; }
+.review-turn-label { width: fit-content; }
+.review-opening-label { color: #596273; border-color: #dce1e8; }
+.review-alternative-nav { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem .75rem; flex-shrink: 0; margin: 0 0 .8rem; }
+.review-alternative-nav h4 { display: flex; align-items: center; flex-wrap: wrap; gap: .35rem; font-size: .875rem; font-weight: 600; margin: 0; }
+.review-alternative-count { color: #596273; font-weight: 400; }
+.review-alternative-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; min-width: 0; }
+.review-turn-link { min-height: 30px; color: inherit; background: var(--review-alternative-surface); border-color: var(--review-alternative-border); white-space: nowrap; }
+.review-turn-link:hover { border-color: #b89b57; background: #f2e8cc; }
+.review-turn-link:focus-visible, .review-alternative:focus-visible { outline: 2px solid var(--peertrain-primary); outline-offset: 3px; }
 .review-transcript .peertrain-ai-avatar { width: 2.5rem; height: 2.5rem; flex: 0 0 2.5rem; }
 .review-transcript .peertrain-chat-message-ai .peertrain-chat-message-bubble { color: #252a32; }
 .review-turn-feedback { padding: .8rem 1rem; border-left: 3px solid #aab8ce; background: #f0f3f7; margin: .6rem 0 1rem; border-radius: 8px; }
-.review-alternative { padding: 1rem; background: #faf5e8; border: 1px solid #e4d6af; border-radius: 12px; margin: .8rem 0; }
+.review-alternative { padding: 1rem; background: var(--review-alternative-surface); border: 1px solid var(--review-alternative-border); border-radius: 12px; margin: .8rem 0; }
+.review-alternative-highlight { border-color: var(--peertrain-primary); box-shadow: 0 0 0 3px #2563eb33; }
 .review-alternative p, .review-turn-feedback p { margin: .5rem 0 0; }
 .review-ai, .review-notes { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
 .review-ai { padding-bottom: 0; }

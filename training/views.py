@@ -660,20 +660,19 @@ def session_review_view(request, session_id):
         messages.success(request, "Saved")
         return redirect("session_review", session_id=session.id)
     examples = list(feedback.review_items.all()) if feedback else []
-    timeline = []
-    for message in session.messages.select_related("session__scenario", "assessment"):
-        assessment = getattr(message, "assessment", None)
-        turn_examples = [item for item in examples if item.message_id == message.pk]
-        # Some historical reviews have a saved turn alternative but no review item.
-        # Render that existing text without creating or changing any saved records.
-        record = assessment.record if assessment else {}
-        alternative = record.get("alternative_reply")
-        if alternative and not any(item.better_reply == alternative for item in turn_examples):
-            turn_examples.append({"message_id": message.pk, "better_reply": alternative,
-                                  "why_it_matters": record.get("alternative_reason", "")})
-        timeline.append({"message": message, "assessment": assessment, "examples": turn_examples})
+    from training.services.review import review_timeline
+    timeline = review_timeline(session, feedback)
+    alternative_turns = []
+    alternative_count = 0
+    for turn in timeline:
+        count = sum(bool(example.get('better_reply') if isinstance(example, dict) else example.better_reply)
+                    for example in turn['examples'])
+        if count:
+            alternative_turns.append(turn)
+            alternative_count += count
     context = _app_context(request, "history", "Session Review")
     context.update(session=session, feedback=feedback, timeline=timeline, examples=examples,
+        alternative_turns=alternative_turns, alternative_count=alternative_count,
         reflection=getattr(session, "reflection", None),
         reflection_messages=session.reflection_messages.all(), reflection_request_id=uuid.uuid4(),
         scenario_meta=_scenario_meta_map().get(session.scenario.boundary_type, {}))

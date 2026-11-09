@@ -1,6 +1,6 @@
 {% load assessment_ui %}
 {% if example.better_reply %}
-<aside class="review-alternative" data-review-message="{{ example.message_id }}">
+<aside class="review-alternative" data-review-message="{{ example.message_id }}" data-alternative-card-turn="{{ turn.turn_number }}" tabindex="-1" aria-label="{{ turn.turn_label }}: An alternative reply to consider">
   <strong>An alternative reply to consider</strong>
   <p><q><em>{{ example.better_reply|linebreaksbr }}</em></q></p>
   {% if example.why_it_matters %}<p>{{ example.why_it_matters|boundary_highlights }}</p>{% endif %}

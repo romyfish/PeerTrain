@@ -1,4 +1,22 @@
 (() => {
+  const transcript = document.querySelector('#review-transcript');
+  let highlightTimer;
+  document.querySelectorAll('[data-alternative-turn]').forEach(button => {
+    button.addEventListener('click', () => {
+      const card = transcript?.querySelector(`[data-alternative-card-turn="${button.dataset.alternativeTurn}"]`);
+      if (!card) return;
+      clearTimeout(highlightTimer);
+      transcript.querySelectorAll('.review-alternative-highlight').forEach(item => item.classList.remove('review-alternative-highlight'));
+      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const top = transcript.scrollTop + card.getBoundingClientRect().top
+        - transcript.getBoundingClientRect().top - transcript.clientTop
+        - Math.max(16, (transcript.clientHeight - card.offsetHeight) / 2);
+      card.focus({ preventScroll: true });
+      transcript.scrollTo({ top: Math.max(0, top), behavior: reducedMotion ? 'instant' : 'smooth' });
+      card.classList.add('review-alternative-highlight');
+      highlightTimer = setTimeout(() => card.classList.remove('review-alternative-highlight'), 1800);
+    });
+  });
   const notesForm = document.querySelector('[data-notes-form]');
   const chatForm = document.querySelector('[data-reflection-form]');
   if (!notesForm || !chatForm) return;
