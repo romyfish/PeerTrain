@@ -1,22 +1,60 @@
 {% extends "base_public.html" %}
+{% load static %}
 
-{% block title %}PeerTrain | Landing{% endblock %}
+{% block title %}PeerTrain{% endblock %}
 
-{% block public_navigation %}{% endblock %}
+{% block extra_head %}
+  <link href="{% static 'css/landing.css' %}?v=20261109-2" rel="stylesheet">
+{% endblock %}
 
 {% block content %}
-<section class="container py-5 py-lg-6">
-  <div class="row justify-content-center">
-    <div class="col-lg-6 col-xl-5">
-      <div class="peertrain-card text-center">
-        <h1 class="display-4 fw-bold text-dark mb-4">PeerTrain</h1>
-        <a href="{% url 'login' %}" class="btn peertrain-btn-primary btn-lg px-5">Log In</a>
-        <p class="small text-muted mt-4 mb-0">
-          Need an account?
-          <a href="{% url 'register' %}" class="fw-semibold text-decoration-none">Register here</a>
-        </p>
-      </div>
+<div class="peertrain-landing">
+  <section class="peertrain-landing-hero" aria-labelledby="welcome-title">
+    <h1 id="welcome-title">Welcome</h1>
+    <p>PeerTrain is an AI-assisted training tool designed to help peer supporters develop their skills in supporting others through simulated practice, constructive feedback, and reflection.</p>
+    <a href="{% url 'scenarios' %}" class="btn peertrain-btn-primary btn-lg">
+      Start Training <i class="bi bi-arrow-right" aria-hidden="true"></i>
+    </a>
+  </section>
+
+  <section class="peertrain-landing-section" aria-labelledby="how-title">
+    <h2 id="how-title">How PeerTrain works</h2>
+    <div class="peertrain-landing-steps">
+      <article class="peertrain-card peertrain-landing-step">
+        <span class="peertrain-landing-icon"><i class="bi bi-chat-dots" aria-hidden="true"></i></span>
+        <h3>Practise</h3>
+        <p>Engage in realistic conversations with AI-simulated help-seekers, exploring challenging situations in peer support.</p>
+      </article>
+      <article class="peertrain-card peertrain-landing-step">
+        <span class="peertrain-landing-icon"><i class="bi bi-chat-square-quote" aria-hidden="true"></i></span>
+        <h3>Get feedback</h3>
+        <p>Receive feedback on your responses, review key moments, and consider alternative ways of responding.</p>
+      </article>
+      <article class="peertrain-card peertrain-landing-step">
+        <span class="peertrain-landing-icon"><i class="bi bi-journal-text" aria-hidden="true"></i></span>
+        <h3>Reflect</h3>
+        <p>Reflect on your considerations, explore the feedback with an AI chatbot, or record your own thoughts.</p>
+      </article>
     </div>
-  </div>
-</section>
+  </section>
+
+  <section class="peertrain-landing-section peertrain-landing-prose" aria-labelledby="research-title">
+    <h2 id="research-title">About this research</h2>
+    <div>
+      <p>PeerTrain is a research prototype exploring how AI can help peer supporters develop their skills and confidence to give effective and sustainable support to others.</p>
+      <p>It focuses particularly on navigating interpersonal boundaries and sensitive situations while respecting the values of peer support.</p>
+    </div>
+  </section>
+
+  <section class="peertrain-landing-section peertrain-landing-prose" aria-labelledby="scope-title">
+    <h2 id="scope-title">What PeerTrain is — and isn't</h2>
+    <div>
+      <p>PeerTrain is designed for training and reflection, not for providing real-world peer support, clinical advice, or crisis intervention.</p>
+      <p>Its AI-simulated conversations and AI-generated feedback may be imperfect. They are intended to encourage learning and critical reflection, not to provide definitive answers about the “right” way to support someone.</p>
+      <p>PeerTrain is not a substitute for human-led training or supervision.</p>
+    </div>
+  </section>
+
+  <footer class="peertrain-landing-footer">Research prototype · 2026</footer>
+</div>
 {% endblock %}

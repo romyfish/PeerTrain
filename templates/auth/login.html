@@ -12,6 +12,7 @@
       <div class="peertrain-card p-4 p-lg-5">
         <form method="post" class="d-grid gap-3">
           {% csrf_token %}
+          <input type="hidden" name="next" value="{{ next }}">
           <div>
             <label class="form-label fw-semibold">{{ form.email.label }}</label>
             {{ form.email }}

@@ -1230,15 +1230,22 @@ class PageSmokeTests(TestCase):
         )
         self.assertContains(analytics_response, "Practice records")
 
-    def test_landing_restores_login_card_without_public_navigation(self):
+    def test_landing_shows_public_research_sections_and_navigation(self):
         landing_response = self.client.get(reverse("landing"))
         login_response = self.client.get(reverse("login"))
 
-        self.assertNotContains(landing_response, "peertrain-app-topbar-public", html=False)
-        self.assertContains(landing_response, 'class="peertrain-card text-center"', html=False)
-        self.assertContains(landing_response, "Log In", count=1)
-        self.assertContains(landing_response, "Register here")
-        self.assertContains(landing_response, "Need an account?")
+        self.assertContains(landing_response, "peertrain-app-topbar-public", html=False)
+        self.assertContains(landing_response, "Log in", count=1)
+        self.assertContains(landing_response, f'href="{reverse("scenarios")}"')
+        self.assertContains(landing_response, "Start Training", count=1)
+        sections = ("Welcome", "How PeerTrain works", "Practise", "Get feedback", "Reflect",
+                    "About this research", "What PeerTrain is — and isn't", "Research prototype · 2026")
+        content = landing_response.content.decode()
+        positions = [content.index(text) for text in sections]
+        self.assertEqual(positions, sorted(positions))
+        self.assertNotContains(landing_response, "Guest")
+        self.assertNotContains(landing_response, "Need an account?")
+        self.assertNotContains(landing_response, "Register here")
         self.assertContains(login_response, "peertrain-app-topbar-public", html=False)
         self.assertContains(login_response, "Register here")
 
@@ -1752,7 +1759,7 @@ class PageSmokeTests(TestCase):
         self.assertContains(response, "peertrain-app-topbar", html=False)
         self.assertContains(response, 'class="peertrain-account-menu-button', html=False)
         self.assertContains(response, 'id="peertrain-mobile-navigation"', html=False)
-        self.assertContains(response, reverse("dashboard"))
+        self.assertContains(response, reverse("landing"))
         self.assertContains(response, reverse("scenarios"))
         self.assertContains(response, reverse("history"))
         self.assertContains(response, "bi-clock-history")

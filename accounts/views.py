@@ -1,6 +1,8 @@
 from django.contrib import messages
 from django.contrib.auth import login, logout
+from django.contrib.auth.decorators import login_required
 from django.shortcuts import redirect, render
+from django.utils.http import url_has_allowed_host_and_scheme
 
 from .forms import AdminRegistrationForm, LoginForm, TraineeRegistrationForm
 
@@ -12,24 +14,28 @@ def _redirect_for_user(user):
 
 
 def landing_view(request):
-    if request.user.is_authenticated:
-        return _redirect_for_user(request.user)
-    return render(request, "public/landing.html")
+    return render(request, "public/landing.html", {"homepage_navigation": True})
 
 
 def login_view(request):
+    next_url = request.POST.get("next", request.GET.get("next", ""))
+    if not url_has_allowed_host_and_scheme(
+        next_url, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+    ):
+        next_url = ""
+
     if request.user.is_authenticated:
-        return _redirect_for_user(request.user)
+        return redirect(next_url) if next_url else _redirect_for_user(request.user)
 
     if request.method == "POST":
         form = LoginForm(request.POST, initial={"request": request})
         if form.is_valid():
             login(request, form.user)
-            return _redirect_for_user(form.user)
+            return redirect(next_url) if next_url else _redirect_for_user(form.user)
     else:
         form = LoginForm(initial={"request": request})
 
-    return render(request, "auth/login.html", {"form": form})
+    return render(request, "auth/login.html", {"form": form, "next": next_url})
 
 
 def register_view(request):
@@ -70,6 +76,7 @@ def admin_register_view(request):
     return render(request, "auth/register_admin.html", {"form": form})
 
 
+@login_required
 def logout_view(request):
     logout(request)
     messages.info(request, "You have been signed out.")

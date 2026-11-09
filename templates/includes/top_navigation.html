@@ -1,14 +1,29 @@
-<header class="peertrain-app-topbar {% if public_layout %}peertrain-app-topbar-public{% endif %}">
+<header class="peertrain-app-topbar {% if public_layout %}peertrain-app-topbar-public{% endif %} {% if homepage_navigation %}peertrain-homepage-topbar{% endif %}">
   <div class="peertrain-app-topbar-inner">
     <a
-      href="{% if public_layout %}{% url 'landing' %}{% elif sidebar_theme == 'admin' %}{% url 'admin_dashboard' %}{% else %}{% url 'dashboard' %}{% endif %}"
+      href="{% if request.user.is_superuser or request.user.role == 'ADMIN' %}{% url 'admin_users' %}{% else %}{% url 'landing' %}{% endif %}"
       class="peertrain-topnav-brand"
       aria-label="PeerTrain home"
     >
       {% include "includes/logo.html" %}
     </a>
 
-    {% if not public_layout %}
+    {% if homepage_navigation %}
+      <nav class="peertrain-topnav-links" aria-label="Primary navigation">
+        <a href="{% url 'landing' %}" class="peertrain-topnav-link active" aria-current="page">
+          <i class="bi bi-house-door-fill" aria-hidden="true"></i>
+          <span>Home</span>
+        </a>
+        <a href="{% url 'scenarios' %}" class="peertrain-topnav-link">
+          <i class="bi bi-book-fill" aria-hidden="true"></i>
+          <span>Scenarios</span>
+        </a>
+        <a href="{% url 'history' %}" class="peertrain-topnav-link">
+          <i class="bi bi-clock-history" aria-hidden="true"></i>
+          <span>History</span>
+        </a>
+      </nav>
+    {% elif not public_layout %}
       <nav class="peertrain-topnav-links peertrain-topnav-desktop" aria-label="Primary navigation">
         {% for item in sidebar_items %}
           <a
@@ -65,7 +80,7 @@
           </button>
         {% endif %}
       {% else %}
-        <a href="{% url 'login' %}" class="peertrain-topnav-login">Log In</a>
+        <a href="{% url 'login' %}" class="peertrain-topnav-login">Log in</a>
       {% endif %}
     </div>
   </div>

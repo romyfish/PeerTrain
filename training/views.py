@@ -44,7 +44,7 @@ def _sidebar_items(user=None, is_admin=False):
         ]
 
     return [
-        {"label": "Home", "url": reverse("dashboard"), "name": "dashboard", "icon": "bi-house-door-fill"},
+        {"label": "Home", "url": reverse("landing"), "name": "landing", "icon": "bi-house-door-fill"},
         {"label": "Scenarios", "url": reverse("scenarios"), "name": "scenarios", "icon": "bi-book-fill"},
         {"label": "History", "url": reverse("history"), "name": "history", "icon": "bi-clock-history"},
     ]

@@ -1,3 +1,4 @@
+from django.contrib.auth.decorators import login_required
 from django.urls import path
 from django.views.generic import RedirectView
 
@@ -15,19 +16,23 @@ urlpatterns = [
     path("history/<int:session_id>/", views.history_detail_view, name="history_detail"),
     path(
         "archives/",
-        RedirectView.as_view(
-            pattern_name="history",
-            permanent=True,
-            query_string=True,
+        login_required(
+            RedirectView.as_view(
+                pattern_name="history",
+                permanent=True,
+                query_string=True,
+            )
         ),
         name="legacy_archives",
     ),
     path(
         "archives/<int:session_id>/",
-        RedirectView.as_view(
-            pattern_name="history_detail",
-            permanent=True,
-            query_string=True,
+        login_required(
+            RedirectView.as_view(
+                pattern_name="history_detail",
+                permanent=True,
+                query_string=True,
+            )
         ),
         name="legacy_archive_detail",
     ),
