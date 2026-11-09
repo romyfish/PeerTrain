@@ -10,7 +10,7 @@ from google import genai
 from google.genai import types as google_types
 from openai import OpenAI
 from training.content import boundary_framework_for
-from training.prompts import (CMCV_FRAMEWORK_VERSION, ROLEPLAY_CONTINUATION_INSTRUCTIONS,
+from training.prompts import (ROLEPLAY_OPENING_REQUEST, ROLEPLAY_GOOGLE_CONTINUATION, QUICK_TEST_REPLY_REQUEST, CMCV_FRAMEWORK_VERSION, ROLEPLAY_CONTINUATION_INSTRUCTIONS,
     ROLEPLAY_OPENING_INSTRUCTIONS, ROLEPLAY_SAFETY_CONSTRAINTS, default_prompt_parts,
     scenario_prompt_context_for, persona_prompt_for)
 from training.models import Feedback, Message, Scenario
@@ -309,9 +309,11 @@ def _trainee_quality_brief(boundary_type: str, quality: str) -> str:
     )
 
 
-def _trainee_quick_reply_system_prompt(session, quality: str) -> str:
-    transcript = "\n".join(_conversation_lines(session))
-    recent_trainee_lines = "\n".join(f"- {line}" for line in _recent_user_signatures(session)) or "- None yet."
+def _trainee_quick_reply_system_prompt(session, quality: str, *, transcript=None, recent_trainee_lines=None) -> str:
+    if transcript is None:
+        transcript = "\n".join(_conversation_lines(session))
+    if recent_trainee_lines is None:
+        recent_trainee_lines = "\n".join(f"- {line}" for line in _recent_user_signatures(session)) or "- None yet."
     quality_instruction = (
         "Write one clearly stronger trainee peer-support reply."
         if quality == "helpful"
@@ -356,7 +358,7 @@ def _openai_demo_trainee_reply(session, quality: str) -> str:
         input_payload.append(
             {
                 "role": "user",
-                "content": "Write only the trainee's next message.",
+                "content": QUICK_TEST_REPLY_REQUEST,
             }
         )
 
@@ -387,7 +389,7 @@ def _openai_demo_trainee_reply(session, quality: str) -> str:
 def _google_demo_trainee_reply(session, quality: str) -> str:
     client = _google_client()
     system_prompt = _trainee_quick_reply_system_prompt(session, quality)
-    user_prompt = "Write only the trainee's next message."
+    user_prompt = QUICK_TEST_REPLY_REQUEST
 
     # This is where the Google Gemini API call happens.
     response = client.models.generate_content(
@@ -440,10 +442,15 @@ def build_boundary_status_indicator(session) -> BoundaryStatusIndicator:
 
 
 def _roleplay_system_prompt(session, prompt, user_message: str, *, opening=False) -> str:
-    persona = persona_prompt_for(session.scenario.boundary_type, session.persona)
     from training.models import TurnAssessment
     assessment = TurnAssessment.objects.filter(trainee_message__session=session).last()
     cue = assessment.roleplay_cue if assessment and not opening else ''
+    return compose_roleplay_prompt(prompt, session.scenario.boundary_type, session.persona, opening=opening, cue=cue)
+
+
+def compose_roleplay_prompt(prompt, boundary_type, persona_key, *, opening=False, cue=''):
+    """Compose the same role-play instructions without accessing participant records."""
+    persona = persona_prompt_for(boundary_type, persona_key)
     if cue:
         persona += ('\nOptional context cue, only if consistent with the established persona: ' + cue
                     + '\nRespond naturally. Do not manufacture challenges or change established risk facts.')
@@ -658,7 +665,7 @@ def _openai_role_play_opening(session, prompt) -> str:
         input_payload.append(
             {
                 "role": "user",
-                "content": "Open the role-play now. Write only the help-seeker's first message.",
+                "content": ROLEPLAY_OPENING_REQUEST,
             }
         )
 
@@ -691,7 +698,7 @@ def _google_role_play_opening(session, prompt) -> str:
     # This is where the Google Gemini API call for the live opening happens.
     response = client.models.generate_content(
         model=settings.GOOGLE_MODEL,
-        contents="Open the role-play now. Write only the help-seeker's first message.",
+        contents=ROLEPLAY_OPENING_REQUEST,
         config=google_types.GenerateContentConfig(
             system_instruction=system_prompt,
             temperature=0.8,
@@ -705,7 +712,7 @@ def _google_role_play_opening(session, prompt) -> str:
     if finish_reason.endswith("MAX_TOKENS") or quality_issue:
         retry_response = client.models.generate_content(
             model=settings.GOOGLE_MODEL,
-            contents="Open the role-play now. Write only the help-seeker's first message.",
+            contents=ROLEPLAY_OPENING_REQUEST,
             config=google_types.GenerateContentConfig(
                 system_instruction=(
                     f"{system_prompt}\n\n"
@@ -772,11 +779,7 @@ def _openai_role_play_reply(session, prompt, user_message: str) -> str:
 def _google_role_play_reply(session, prompt, user_message: str) -> str:
     developer_prompt = _roleplay_system_prompt(session, prompt, user_message)
     transcript = "\n".join(_conversation_lines(session))
-    user_prompt = (
-        "Continue this peer-support role-play.\n\n"
-        f"Conversation so far:\n{transcript}\n\n"
-        "Reply only as the help-seeker in a natural, emotionally believable way."
-    )
+    user_prompt = ROLEPLAY_GOOGLE_CONTINUATION.format(transcript=transcript)
     base_config = google_types.GenerateContentConfig(
         system_instruction=developer_prompt,
         temperature=0.8,

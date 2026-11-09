@@ -34,6 +34,7 @@ urlpatterns = [
     path("progress/", views.progress_view, name="progress"),
     path("admin/", views.admin_dashboard_view, name="admin_dashboard"),
     path("admin/users/", views.admin_users_view, name="admin_users"),
+    path("admin/prompts/", research_views.prompt_inspection, name="admin_prompts"),
     path("admin/records/", research_views.records, name="admin_records"),
     path("admin/users/<int:user_id>/records/", research_views.records, name="admin_user_records"),
     path("admin/records/<int:session_id>/", research_views.record_detail, name="admin_record_detail"),

@@ -1,0 +1,38 @@
+{% extends "base_app.html" %}
+{% load static %}
+{% block extra_head %}<link href="{% static 'css/admin-prompts.css' %}?v=20261108-1" rel="stylesheet">{% endblock %}
+{% block content %}
+<header class="mb-4">
+  <div class="d-flex align-items-center gap-3 mb-2"><h1 class="h2 fw-bold mb-0">System prompts</h1><span class="badge text-bg-secondary">Read-only</span></div>
+  <p class="text-muted mb-0">Inspect the current instructions used by each LLM task. Dynamic conversation inputs appear as placeholders.</p>
+</header>
+<div class="peertrain-prompt-layout">
+  <aside class="peertrain-card peertrain-prompt-navigation" aria-label="LLM tasks">
+    <h2 class="h6 text-uppercase text-muted">LLM tasks</h2>
+    <nav class="nav nav-pills flex-column gap-1">
+      {% for group in prompt_groups %}<a class="nav-link {% if selected_group == group.key %}active{% endif %}" href="?group={{ group.key }}&amp;scenario={{ selected_scenario }}&amp;persona={{ selected_persona }}" {% if selected_group == group.key %}aria-current="page"{% endif %}>{{ group.label }}</a>{% endfor %}
+    </nav>
+  </aside>
+  <div class="peertrain-prompt-content">
+    <section class="peertrain-card mb-3">
+      <h2 class="h4">{{ selected_group_label }}{% if selected_group == 'roleplay' %} · {{ selected_character }}{% endif %}</h2>
+      {% if show_scenario_selection %}
+      <form method="get" class="d-flex flex-wrap align-items-end gap-3 mt-3">
+        <input type="hidden" name="group" value="{{ selected_group }}">
+        <div><label class="form-label" for="prompt-scenario">Scenario</label><select class="form-select" name="scenario" id="prompt-scenario">{% for scenario in prompt_scenarios %}<option value="{{ scenario.key }}" {% if selected_scenario == scenario.key %}selected{% endif %}>{{ scenario.label }}</option>{% endfor %}</select></div>
+        {% if selected_group == 'roleplay' %}<div><label class="form-label" for="prompt-persona">Persona</label><select class="form-select" name="persona" id="prompt-persona"><option value="pso" {% if selected_persona == 'pso' %}selected{% endif %}>PSO member</option><option value="student" {% if selected_persona == 'student' %}selected{% endif %}>University student</option></select></div>{% endif %}
+        <button class="btn btn-outline-primary" type="submit">View prompts</button>
+      </form>
+      {% endif %}
+      <p class="small text-muted mt-3 mb-0">Sections follow the runtime prompt composition. Expand a section to read its full text. Viewing this page makes no model requests.</p>
+    </section>
+    {% for section in prompt_sections %}
+    <details class="peertrain-card peertrain-prompt-section mb-3" {% if 'Complete' in section.title or 'complete' in section.title %}open{% endif %}>
+      <summary>{{ section.title }}</summary>
+      {% if section.note %}<p class="small text-muted mt-3">{{ section.note }}</p>{% endif %}
+      <pre>{{ section.text }}</pre>
+    </details>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

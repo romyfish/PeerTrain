@@ -18,6 +18,17 @@ from training.services.suspension import PracticeFailure, pause
 
 
 @login_required
+@role_required('ADMIN')
+@require_safe
+def prompt_inspection(request):
+    from training.services.prompt_catalog import prompt_catalog
+    from training.views import _app_context
+    context = _app_context(request, 'admin_prompts', 'System prompts', is_admin=True)
+    context.update(prompt_catalog(request.GET))
+    return render(request, 'admin/prompts.html', context)
+
+
+@login_required
 @role_required('TRAINEE')
 @require_POST
 def live_feedback_event(request, session_id):

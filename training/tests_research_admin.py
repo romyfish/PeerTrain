@@ -191,7 +191,7 @@ class ResearchAdministrationTests(TestCase):
         self.assertContains(self.client.get(self.detail), 'Private notes')
         self.assertNotContains(self.client.get(self.detail), '<textarea')
         self.assertEqual(self.client.post(reverse('admin_records'), {'content': 'change'}).status_code, 405)
-        for route in ('scoring-reviews', 'analytics', 'settings', 'prompts'):
+        for route in ('scoring-reviews', 'analytics', 'settings'):
             self.assertEqual(self.client.get('/admin/' + route + '/').status_code, 404)
 
     def test_account_deletion_is_confirmed_and_protects_research_records(self):

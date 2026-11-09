@@ -21,6 +21,8 @@ from training.services.ai import (
     get_prompt_for_type,
 )
 from training.tests import TrainingFlowBase
+from training.services.prompt_catalog import prompt_catalog, TASKS, STRUCTURED_TASKS
+from training.services.assessment import task_prompt_parts
 
 
 class CodePromptTests(TrainingFlowBase):
@@ -30,6 +32,65 @@ class CodePromptTests(TrainingFlowBase):
         checker = patch("training.services.assessment.checked_reply", side_effect=lambda session, candidate: (candidate, True))
         checker.start()
         self.addCleanup(checker.stop)
+
+    def test_admin_prompt_inspection_permissions_and_read_only_methods(self):
+        url = reverse('admin_prompts')
+        self.assertEqual(self.client.get(url).status_code, 302)
+        self.client.force_login(self.trainee)
+        self.assertEqual(self.client.get(url).status_code, 403)
+        self.client.force_login(self.admin)
+        with patch('training.services.ai._openai_client') as openai, patch('training.services.ai._google_client') as google:
+            for group, label in TASKS:
+                response = self.client.get(url, {'group': group})
+                self.assertContains(response, label)
+                self.assertContains(response, 'Read-only')
+                self.assertNotContains(response, '<textarea')
+                self.assertNotContains(response, 'method="post"')
+            openai.assert_not_called()
+            google.assert_not_called()
+        for method in ('post', 'put', 'patch', 'delete'):
+            self.assertEqual(getattr(self.client, method)(url, {'action': 'edit'}).status_code, 405)
+        self.assertContains(self.client.get(reverse('admin_users')), reverse('admin_prompts'))
+
+    def test_catalog_roleplay_covers_six_complete_personas_and_runtime_layers(self):
+        for boundary, scenario in prompts.ROLEPLAY_SCENARIOS.items():
+            for mode in scenario['personas']:
+                with self.subTest(boundary=boundary, persona=mode), self.assertNumQueries(0):
+                    catalog = prompt_catalog({'scenario': boundary, 'persona': mode})
+                    sections = {section['title']: section['text'] for section in catalog['prompt_sections']}
+                    self.assertEqual(sections['Selected persona — complete case'], prompts.persona_prompt_for(boundary, mode))
+                    for label in ('Complete opening system message', 'Complete continuation system message'):
+                        self.assertIn(prompts.ROLEPLAY_SHARED_INSTRUCTIONS, sections[label])
+                        self.assertIn(prompts.scenario_prompt_context_for('ROLE_PLAY', boundary), sections[label])
+                        self.assertIn(prompts.persona_prompt_for(boundary, mode), sections[label])
+                        self.assertIn(prompts.ROLEPLAY_SAFETY_CONSTRAINTS, sections[label])
+                    self.assertIn('{latest_saved_assessment.roleplay_cue}', sections['Complete continuation system message with optional cue'])
+                    self.assertEqual(sections['Opening request'], prompts.ROLEPLAY_OPENING_REQUEST)
+
+    def test_catalog_structured_tasks_match_live_system_and_output_schema(self):
+        import json
+        for group, (task, schema) in STRUCTURED_TASKS.items():
+            with self.subTest(task=task), self.assertNumQueries(0):
+                catalog = prompt_catalog({'group': group})
+                sections = {section['title']: section['text'] for section in catalog['prompt_sections']}
+                self.assertEqual(sections['Complete system message'], task_prompt_parts(task)[0])
+                self.assertIn(prompts.TASK_PROMPTS[task][1], sections['Complete user input template'])
+                self.assertEqual(json.loads(sections['Structured output schema']), schema.model_json_schema())
+                if task == 'REFLECTION_CHAT':
+                    self.assertIn(prompts.REFLECTION_USER_SAFETY, sections['Complete system message'])
+                if task in {'ASSESSMENT', 'SESSION_REVIEW'}:
+                    self.assertIn(prompts.ASSESSMENT_RUBRIC, sections['Complete system message'])
+
+    def test_catalog_test_replies_contains_both_qualities_and_safe_invalid_filters(self):
+        with self.assertNumQueries(0):
+            catalog = prompt_catalog({'group': 'test_replies', 'scenario': 'SAFETY'})
+            sections = {section['title']: section['text'] for section in catalog['prompt_sections']}
+            self.assertIn('clearly stronger', sections['Better reply — complete system message'])
+            self.assertIn('clearly weaker', sections['Poorer reply — complete system message'])
+            self.assertIn('{conversation_transcript}', sections['Better reply — complete system message'])
+            self.assertEqual(sections['User input'], prompts.QUICK_TEST_REPLY_REQUEST)
+            invalid = prompt_catalog({'group': '<script>', 'scenario': 'missing', 'persona': 'missing'})
+            self.assertEqual((invalid['selected_group'], invalid['selected_scenario'], invalid['selected_persona']), ('roleplay', 'AGENCY', 'pso'))
 
     def test_roleplay_content_matches_source_and_excludes_reserved_cases(self):
         reference = (Path(settings.BASE_DIR) / "Role-play_Prompts.md").read_text(encoding="utf-8")

@@ -40,6 +40,7 @@ def _sidebar_items(user=None, is_admin=False):
             {"label": "Users", "url": reverse("admin_users"), "name": "admin_users", "icon": "bi-people-fill"},
             {"label": "Practice records", "url": reverse("admin_records"), "name": "admin_records", "icon": "bi-journal-text"},
             {"label": "Interaction logs", "url": reverse("admin_logs"), "name": "admin_logs", "icon": "bi-clock-history"},
+            {"label": "Prompts", "url": reverse("admin_prompts"), "name": "admin_prompts", "icon": "bi-chat-left-text-fill"},
         ]
 
     return [

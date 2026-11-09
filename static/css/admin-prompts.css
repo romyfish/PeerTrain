@@ -1,0 +1,43 @@
+.peertrain-prompt-layout {
+  display: grid;
+  grid-template-columns: 230px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.peertrain-prompt-navigation {
+  position: sticky;
+  top: 96px;
+}
+
+.peertrain-prompt-content {
+  min-width: 0;
+}
+
+.peertrain-prompt-section summary {
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.peertrain-prompt-section pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.875rem;
+  line-height: 1.65;
+  margin: 16px 0 0;
+  padding: 20px;
+  border-radius: 12px;
+  background: #f6f8fb;
+  color: #252a32;
+  user-select: text;
+}
+
+@media (max-width: 991.98px) {
+  .peertrain-prompt-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .peertrain-prompt-navigation {
+    position: static;
+  }
+}
