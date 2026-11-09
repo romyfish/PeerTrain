@@ -1474,15 +1474,15 @@ class PageSmokeTests(TestCase):
             ),
         )
 
-    def test_scenario_selection_renders_four_themed_cards_without_detail_metadata(self):
+    def test_scenario_selection_renders_three_themed_cards_without_detail_metadata(self):
         self.client.force_login(self.trainee)
 
         response = self.client.get(reverse("scenarios"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'class="peertrain-card h-100 scenario-card', count=4)
+        self.assertContains(response, 'class="peertrain-card h-100 scenario-card', count=3)
         self.assertContains(response, "Start Scenario", count=3)
-        self.assertContains(response, "Coming Soon...")
+        self.assertNotContains(response, "Coming Soon")
         self.assertNotContains(response, "Learning objectives")
         self.assertNotContains(response, 'class="bi bi-clock"', html=False)
         self.assertNotContains(response, "bi-list-check")

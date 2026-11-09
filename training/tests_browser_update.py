@@ -30,6 +30,41 @@ BROWSER = next((str(p) for p in (
 @override_settings(OPENAI_API_KEY='', GEMINI_API_KEY='',
                    PASSWORD_HASHERS=['django.contrib.auth.hashers.MD5PasswordHasher'])
 class BrowserUpdateTests(StaticLiveServerTestCase):
+    def test_scenario_cards_fit_desktop_and_wrap_on_narrow_screens(self):
+        from django.core.management import call_command
+        from playwright.sync_api import sync_playwright, expect
+
+        call_command('seed_peertrain', verbosity=0)
+        user = get_user_model().objects.get(email='alex.chen@university.ac.uk')
+        self.client.force_login(user)
+        cookie = self.client.cookies[settings.SESSION_COOKIE_NAME].value
+        with sync_playwright() as driver:
+            browser = driver.chromium.launch(executable_path=BROWSER, headless=True)
+            context = browser.new_context()
+            context.add_cookies([{'name': settings.SESSION_COOKIE_NAME, 'value': cookie, 'url': self.live_server_url}])
+            page = context.new_page()
+            for width, height, columns in ((1920, 900, 3), (1440, 900, 3), (1366, 768, 3), (1280, 720, 3),
+                                           (1024, 768, 3), (768, 1024, 2), (390, 844, 1)):
+                with self.subTest(width=width, height=height):
+                    page.set_viewport_size({'width': width, 'height': height})
+                    page.goto(self.live_server_url + reverse('scenarios'))
+                    page.evaluate('document.fonts.ready')
+                    cards = page.locator('.scenario-card')
+                    expect(cards).to_have_count(3)
+                    expect(page.get_by_role('button', name='Start Scenario')).to_have_count(3)
+                    expect(page.get_by_text('Coming Soon', exact=False)).to_have_count(0)
+                    boxes = [card.bounding_box() for card in cards.all()]
+                    self.assertEqual(sum(abs(box['y'] - boxes[0]['y']) < 1 for box in boxes), columns)
+                    self.assertTrue(page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'))
+                    if columns == 3:
+                        self.assertTrue(page.evaluate('document.documentElement.scrollHeight <= window.innerHeight'))
+                        self.assertTrue(all(box['y'] + box['height'] <= height for box in boxes))
+                        for box in boxes:
+                            bottom_gap = height - box['y'] - box['height']
+                            self.assertGreaterEqual(bottom_gap, 24)
+                            self.assertLessEqual(bottom_gap, 80)
+            browser.close()
+
     def test_review_alternative_navigation_scopes_scroll_and_supports_keyboard_and_reduced_motion(self):
         from playwright.sync_api import sync_playwright, expect
         user = get_user_model().objects.create_user(username='alternative-browser', role='TRAINEE')

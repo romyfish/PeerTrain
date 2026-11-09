@@ -1,7 +1,4 @@
-# PeerTrain
-LLM-based training platform for peer supporters
-
-## Introduction
+# Introduction
 
 PeerTrain is an AI-assisted training tool designed to help peer supporters develop their skills in supporting others through simulated practice, constructive feedback, and reflection.
 

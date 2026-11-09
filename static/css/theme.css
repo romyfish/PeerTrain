@@ -1184,6 +1184,8 @@ body.peertrain-body {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: space-between;
+  gap: clamp(0.75rem, 2vh, 1.5rem);
   background: var(--scenario-surface);
   border-color: var(--scenario-border);
   border-radius: 1.5rem;
@@ -1196,6 +1198,16 @@ body.peertrain-body {
   border-color: var(--scenario-accent);
   box-shadow: 0 12px 30px rgba(15, 23, 42, 0.1);
   transform: translateY(-2px);
+}
+
+@media (min-width: 992px) {
+  .peertrain-card.scenario-card {
+    min-height: max(21.5rem, calc(100svh - var(--peertrain-topbar-height, 68px) - 10rem));
+  }
+
+  .peertrain-scenario-visual {
+    transform: translateY(clamp(0.5rem, 2vh, 1.25rem));
+  }
 }
 
 .peertrain-card.scenario-card.scenario-theme-emotional {
@@ -1229,7 +1241,8 @@ body.peertrain-body {
 .peertrain-scenario-visual {
   width: clamp(6rem, 7vw, 7rem);
   height: clamp(6rem, 7vw, 7rem);
-  margin: 0 auto 1rem;
+  margin: 0 auto;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1253,18 +1266,18 @@ body.peertrain-body {
 
 .peertrain-scenario-context {
   max-width: 34rem;
-  margin: 0.55rem 0 0;
+  margin: 0.85rem 0 0;
   color: color-mix(in srgb, var(--scenario-accent) 76%, var(--peertrain-text));
-  font-size: 0.9rem;
+  font-size: 1.05rem;
   font-weight: 650;
-  line-height: 1.4;
+  line-height: 1.5;
   text-wrap: pretty;
 }
 
 .peertrain-scenario-form {
   width: auto;
-  margin-top: auto;
-  padding-top: 1.4rem;
+  margin-top: 0;
+  flex-shrink: 0;
 }
 
 .peertrain-scenario-start {
