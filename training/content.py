@@ -178,3 +178,48 @@ def scenario_map_by_boundary():
 
 def scenario_meta_for_boundary(boundary_type):
     return scenario_map_by_boundary().get(boundary_type, {})
+
+
+# Participant-facing summaries of the training focus and learning objectives.
+# Keep future role-play developments and private case information out of the UI.
+PRACTICE_FOCUS = {
+    "AGENCY": (
+        "Listen and help the person explore their feelings and options. Support their own "
+        "decisions without taking over or shifting the focus to yourself."
+    ),
+    "RELATIONSHIP": (
+        "Offer warmth and understanding while being clear about what you can realistically "
+        "provide. Explore ways to support the person without overextending yourself."
+    ),
+    "SAFETY": (
+        "Stay present, take the person's distress seriously, and explore their immediate "
+        "safety. Work together to consider what might help them stay safe."
+    ),
+}
+
+
+# UI copy is intentionally separate from the LLM's setting and case background.
+PRACTICE_INTRODUCTIONS = {
+    "AGENCY": {
+        "pso": "Andy is fairly new to the peer support group and is beginning to feel comfortable sharing personal concerns with you.",
+        "student": "Alex has come to a university peer support session to talk with you about difficulties he's been keeping to himself.",
+    },
+    "RELATIONSHIP": {
+        "pso": "Bailey cares for her mother full-time, so she sometimes misses peer sessions. She's talking with you for further support.",
+        "student": "Billy is an international university student attending their first peer support appointment with you. The session is coming to an end.",
+    },
+    "SAFETY": {
+        "pso": "Casey has been visiting a local peer support community while recovering from a workplace injury that has kept him from working.",
+        "student": "Carly has booked a university peer support session with you because life has recently felt difficult to manage.",
+    },
+}
+
+
+def practice_guidance_for(session):
+    """Return concise UI copy without exposing LLM persona context."""
+    boundary_type = session.scenario.boundary_type
+    return {
+        "name": session.character["name"],
+        "introduction": PRACTICE_INTRODUCTIONS[boundary_type][session.persona or "pso"],
+        "focus": PRACTICE_FOCUS[boundary_type],
+    }

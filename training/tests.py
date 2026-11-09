@@ -1,3 +1,5 @@
+import re
+
 from training.prompts import ROLEPLAY_SCENARIOS
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -8,9 +10,9 @@ from django.core.management import call_command
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
-from django.utils.html import escape
+from django.utils.html import escape, strip_tags
 
-from training.content import BOUNDARY_FRAMEWORK, SCENARIO_LIBRARY, boundary_framework_for
+from training.content import BOUNDARY_FRAMEWORK, PRACTICE_FOCUS, PRACTICE_INTRODUCTIONS, SCENARIO_LIBRARY, boundary_framework_for
 from training.models import Feedback, FeedbackReviewItem, FeedbackScore, Message, PlatformSetting, Reflection, Scenario, TrainingSession
 from training.services.ai import GeneratedTraineeReply, _clean_generated_text, _looks_incomplete_roleplay_reply, _openai_client, _roleplay_quality_issue, build_boundary_status_indicator, generate_ai_opening, generate_ai_reply, generate_demo_trainee_reply, get_prompt_for_type
 from training.services.progress import (progress_snapshot, recalculate_user_progress)
@@ -203,7 +205,7 @@ class TrainingFlowTests(TrainingFlowBase):
 
         self.assertEqual(first_response.status_code, 200)
         self.assertEqual(second_response.status_code, 200)
-        self.assertIn("Andy (AI-simulated)", first_response.json()["opening_message_html"])
+        self.assertIn("<span>Andy</span>", first_response.json()["opening_message_html"])
         self.assertEqual(first_response.json()["response_source"], Message.ResponseSources.OPENAI)
         self.assertEqual(session.messages.count(), 1)
         mock_opening.assert_called_once_with(session)
@@ -274,7 +276,7 @@ class TrainingFlowTests(TrainingFlowBase):
         self.assertTrue(payload["can_send"])
         self.assertIn("&lt;script&gt;", payload["user_message_html"])
         self.assertNotIn("<script>", payload["user_message_html"])
-        self.assertIn("Andy (AI-simulated)", payload["ai_message_html"])
+        self.assertIn("<span>Andy</span>", payload["ai_message_html"])
         self.assertIn("data-boundary-coach-live", payload["boundary_coach_html"])
         self.assertEqual(session.messages.count(), 3)
 
@@ -417,7 +419,7 @@ class TrainingFlowTests(TrainingFlowBase):
                 self.assertEqual(sent_response.status_code, 200)
                 sent_payload = sent_response.json()
                 self.assertIn(reply_content, sent_payload["user_message_html"])
-                self.assertIn("Andy (AI-simulated)", sent_payload["ai_message_html"])
+                self.assertIn("<span>Andy</span>", sent_payload["ai_message_html"])
                 mock_generate_demo.assert_called_once_with(session, quality)
                 user_message = session.messages.get(sender_type=Message.SenderTypes.USER)
                 self.assertEqual(user_message.response_source, Message.ResponseSources.OPENAI)
@@ -1666,16 +1668,64 @@ class PageSmokeTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'data-guidance-sidebar', count=1, html=False)
-        self.assertContains(response, "Objectives", count=1)
-        self.assertContains(response, "Coaching tips", count=1)
+        self.assertNotContains(response, "<summary>Objectives</summary>", html=False)
+        self.assertNotContains(response, "Coaching tips")
         self.assertContains(response, "View guidance", count=1)
-        self.assertContains(response, 'class="peertrain-guidance-section"', count=2, html=False)
+        self.assertContains(response, 'class="peertrain-guidance-section"', count=3, html=False)
         self.assertNotContains(response, "SCENARIO SUPPORT")
         self.assertContains(response, f'data-session-id="{self.chat_session.id}"', html=False)
-        self.assertContains(response, "/static/js/chat.js?v=20261103-4")
+        self.assertContains(response, "/static/js/chat.js?v=20261109-1")
         self.assertContains(response, "data-guidance-toggle", count=2, html=False)
         for former_level in ["Beginner", "Intermediate", "Advanced"]:
             self.assertNotContains(response, former_level)
+
+    def test_practice_guidance_matches_every_scenario_and_persona_without_private_details(self):
+        self.client.force_login(self.trainee)
+        for boundary in ROLEPLAY_SCENARIOS:
+            scenario = Scenario.objects.get(boundary_type=boundary)
+            for persona in ("", "pso", "student"):
+                with self.subTest(boundary=boundary, persona=persona):
+                    session = TrainingSession.objects.create(
+                        user=self.trainee, scenario=scenario, persona=persona)
+                    character = session.character
+                    # A saved message also checks the shared AJAX message template.
+                    Message.objects.create(session=session, sender_type="AI", content="Hello.")
+                    private_fields = ("setting", "case_background", "emotional_needs", "private_context",
+                                      "behaviour_guidance", "safety_limits", "example_opening")
+                    with patch.dict(character, {key: "PRIVATE CASE DETAIL" for key in private_fields}):
+                        response = self.client.get(reverse("chat", args=[session.pk]))
+                    self.assertContains(response, f"This is a practice conversation with {character['name']}, an <strong>AI-simulated</strong> help-seeker.")
+                    self.assertContains(response, escape(PRACTICE_INTRODUCTIONS[boundary][persona or "pso"]))
+                    self.assertContains(response, escape(PRACTICE_FOCUS[boundary]))
+                    self.assertNotContains(response, "peertrain-guidance-setting")
+                    self.assertNotContains(response, "<h3>Your role</h3>")
+                    self.assertNotContains(response, "<h3>Practice focus</h3>")
+                    sidebar = response.content.decode().split('<div data-practice-guidance>', 1)[1].split('</aside>', 1)[0]
+                    self.assertEqual([strip_tags(heading).strip() for heading in re.findall(r'<h3>(.*?)</h3>', sidebar)],
+                        ["About this conversation", "The setting", "Your focus", "Please note"])
+                    self.assertIn("This is a fictional practice conversation. Avoid sharing real personal information. AI responses may be imperfect. You can end the session at any time.", sidebar)
+                    self.assertContains(response, f"<span>{character['name']}</span>", html=True)
+                    self.assertContains(response, f'<div class="peertrain-chat-speaker">{character["name"]}</div>', html=True)
+                    self.assertNotContains(response, "(AI-simulated)")
+                    self.assertNotContains(response, "PRIVATE CASE DETAIL")
+
+    def test_persona_selection_refreshes_public_guidance(self):
+        self.client.force_login(self.trainee)
+        for boundary in ROLEPLAY_SCENARIOS:
+            for persona in ("pso", "student"):
+                with self.subTest(boundary=boundary, persona=persona):
+                    session = TrainingSession.objects.create(user=self.trainee,
+                        scenario=Scenario.objects.get(boundary_type=boundary))
+                    response = self.client.post(reverse("chat", args=[session.pk]),
+                        {"action": "select_persona", "persona": persona},
+                        HTTP_X_REQUESTED_WITH="XMLHttpRequest")
+                    self.assertEqual(response.status_code, 200)
+                    session.refresh_from_db()
+                    guidance = response.json()["guidance_html"]
+                    self.assertIn(f"This is a practice conversation with {session.character['name']}, an <strong>AI-simulated</strong> help-seeker.", guidance)
+                    self.assertIn(escape(PRACTICE_INTRODUCTIONS[boundary][persona]), guidance)
+                    self.assertIn(escape(PRACTICE_FOCUS[boundary]), guidance)
+                    self.assertNotIn(escape(session.character["setting"]), guidance)
 
     def test_chat_script_uses_endpoint_that_cannot_be_shadowed_by_action_buttons(self):
         script_path = finders.find("js/chat.js")

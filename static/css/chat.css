@@ -30,15 +30,15 @@
   --chat-user-bubble: #5273e0;
   --chat-ai-surface: var(--scenario-accent);
   --chat-sidebar-surface: var(--scenario-surface);
-  /* Scale body typography by 1 / 0.86, with a 13px minimum at a 16px root. */
-  --peertrain-sidebar-min-font-size: 0.8125rem;
+  /* Scale body typography by 1 / 0.86, with a 14px minimum at a 16px root. */
+  --peertrain-sidebar-min-font-size: 0.875rem;
   font-size: 1rem;
   min-height: calc(100dvh - var(--peertrain-topbar-height));
 }
 
 /* Shared component typography overrides apply only inside this chat page. */
 .peertrain-chat-app .peertrain-assessment-status {
-  font-size: 0.9884rem;
+  font-size: 1.25rem;
 }
 
 .peertrain-chat-app .peertrain-boundary-coach-live > .peertrain-assessment-status {
@@ -1043,7 +1043,6 @@
   .peertrain-chat-layout,
   .peertrain-boundary-coach,
   .peertrain-boundary-map-row-meta > i,
-  .peertrain-guidance-section summary::after,
   .peertrain-typing-dot {
     transition: none;
     animation: none;
@@ -1093,6 +1092,14 @@
   overflow-y: auto;
 }
 
+@media (min-width: 992px) {
+  .peertrain-guidance-sidebar-panel {
+    /* Keep text from reflowing and triggering a scrollbar during expansion.
+       The outer sidebar clips the panel while its width animates. */
+    min-width: calc(17.5rem - 1px);
+  }
+}
+
 .peertrain-guidance-sidebar.is-collapsed .peertrain-guidance-sidebar-panel {
   display: none;
 }
@@ -1111,56 +1118,47 @@
   font-weight: 800;
 }
 
+.peertrain-guidance-header {
+  border-bottom: 1px solid var(--peertrain-border);
+  color: var(--peertrain-text);
+  font-family: inherit;
+  font-size: 0.9rem;
+}
+
 .peertrain-guidance-section {
+  padding: 0.75rem 0;
   border-bottom: 1px solid var(--peertrain-border);
 }
 
-.peertrain-guidance-section summary {
-  display: flex;
-  min-height: 3rem;
-  align-items: center;
-  justify-content: space-between;
-  cursor: pointer;
-  list-style: none;
-}
-
-.peertrain-guidance-section summary,
+.peertrain-guidance-section h3,
+.peertrain-guidance-note h3,
 .peertrain-feedback-section-title {
   color: var(--peertrain-text);
   font-family: inherit;
-  font-size: 0.8605rem;
+  font-size: 0.95rem;
   font-weight: 800;
   line-height: 1.5;
 }
 
-.peertrain-guidance-section summary::after {
-  content: "\F282";
-  color: var(--peertrain-text-muted);
-  font-family: "bootstrap-icons";
-  font-size: 0.8125rem;
-  transition: transform 160ms ease;
+.peertrain-guidance-section h3,
+.peertrain-guidance-note h3 {
+  margin: 0 0 0.35rem;
 }
 
-.peertrain-guidance-section[open] summary::after {
-  transform: rotate(180deg);
-}
-
-.peertrain-guidance-section summary::-webkit-details-marker {
-  display: none;
-}
-
-.peertrain-guidance-section summary:focus-visible {
-  border-radius: 0.35rem;
-  outline: 0.2rem solid color-mix(in srgb, var(--scenario-accent) 28%, transparent);
-  outline-offset: 0.08rem;
-}
-
-.peertrain-guidance-sidebar-panel ul {
-  margin: 0 0 0.85rem;
-  padding-left: 1rem;
-  color: #596579;
+.peertrain-guidance-section p,
+.peertrain-guidance-note p {
+  margin: 0;
+  color: #334155;
   font-size: var(--peertrain-sidebar-min-font-size);
   line-height: 1.55;
+}
+
+.peertrain-guidance-note {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  border: 1px solid var(--peertrain-border);
+  border-radius: 0.65rem;
+  background: color-mix(in srgb, var(--chat-sidebar-surface) 45%, #ffffff);
 }
 
 .peertrain-guidance-toggle {

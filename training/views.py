@@ -14,7 +14,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from accounts.decorators import role_required
-from training.content import boundary_framework_for, scenario_map_by_boundary
+from training.content import boundary_framework_for, practice_guidance_for, scenario_map_by_boundary
 from training.prompts import ROLEPLAY_SCENARIOS
 from training.forms import ChatMessageForm
 from training.models import FeedbackReviewItem, Message, PlatformSetting, Reflection, Scenario, TrainingSession, TurnAssessment
@@ -378,6 +378,8 @@ def chat_view(request, session_id):
             return JsonResponse({
                 "ok": True, "name": session.character["name"],
                 "portrait": static(session.character["portrait"]),
+                "guidance_html": render_to_string('trainee/includes/practice_guidance.html',
+                    {'guidance': practice_guidance_for(session)}, request=request),
                 "boundary_coach_html": render_to_string('trainee/includes/boundary_coach_live.html',
                     {**state, 'session': session}, request=request),
             })
@@ -597,6 +599,7 @@ def chat_view(request, session_id):
             "chat_messages": session.messages.all(),
             "form": form,
             "scenario_meta": scenario_meta,
+            "guidance": practice_guidance_for(session),
             "show_test_reply_tools": _test_reply_tools(request.user),
             "practice_pending": session.processing,
             "practice_paused": session.status == "PAUSED",

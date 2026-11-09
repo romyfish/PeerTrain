@@ -30,6 +30,80 @@ BROWSER = next((str(p) for p in (
 @override_settings(OPENAI_API_KEY='', GEMINI_API_KEY='',
                    PASSWORD_HASHERS=['django.contrib.auth.hashers.MD5PasswordHasher'])
 class BrowserUpdateTests(StaticLiveServerTestCase):
+    def test_guidance_persona_refresh_pending_labels_and_responsive_controls(self):
+        from playwright.sync_api import sync_playwright, expect
+        from training.prompts import ROLEPLAY_SCENARIOS
+        from training.content import PRACTICE_FOCUS, PRACTICE_INTRODUCTIONS
+
+        user = get_user_model().objects.create_user(username='guidance-browser', role='TRAINEE')
+        sessions = []
+        for boundary, config in ROLEPLAY_SCENARIOS.items():
+            scenario = Scenario.objects.create(title=boundary, boundary_type=boundary, estimated_duration_min=10)
+            for persona in ('pso', 'student'):
+                session = TrainingSession.objects.create(user=user, scenario=scenario)
+                sessions.append((session.pk, boundary, persona, config['personas'][persona]))
+        self.client.force_login(user)
+        cookie = self.client.cookies[settings.SESSION_COOKIE_NAME].value
+        with sync_playwright() as driver:
+            browser = driver.chromium.launch(executable_path=BROWSER, headless=True)
+            context = browser.new_context(viewport={'width': 1440, 'height': 900})
+            context.add_cookies([{'name': settings.SESSION_COOKIE_NAME, 'value': cookie, 'url': self.live_server_url}])
+            page = context.new_page()
+            page.set_default_timeout(10000)
+            held_openings = []
+            def hold_opening(route):
+                if 'start_roleplay' in (route.request.post_data or ''):
+                    held_openings.append(route)
+                else:
+                    route.continue_()
+            page.route('**/sessions/*/chat/', hold_opening)
+            for pk, boundary, persona, character in sessions:
+                with self.subTest(persona=persona, name=character['name']):
+                    page.set_viewport_size({'width': 1440, 'height': 900})
+                    page.goto(self.live_server_url + reverse('chat', args=[pk]))
+                    expect(page.locator('#persona-selection')).to_be_visible()
+                    page.locator('#student-mode').set_checked(persona == 'student')
+                    page.get_by_role('button', name='Got it!').click()
+                    guidance = page.locator('[data-practice-guidance]')
+                    expect(guidance).to_contain_text(f"This is a practice conversation with {character['name']}, an AI-simulated help-seeker.")
+                    expect(guidance).to_contain_text(PRACTICE_INTRODUCTIONS[boundary][persona])
+                    expect(guidance).to_contain_text(PRACTICE_FOCUS[boundary])
+                    expect(guidance.locator('h3')).to_have_text(['About this conversation', 'The setting', 'Your focus', 'Please note'])
+                    expect(page.locator('[data-pending-ai] .peertrain-chat-speaker')).to_have_text(character['name'])
+                    panel = page.locator('[data-guidance-panel]')
+                    expect(panel).to_be_visible()
+                    original_width = panel.evaluate('(el) => el.clientWidth')
+                    page.get_by_role('button', name='Collapse guidance', exact=True).click()
+                    expect(panel).to_be_hidden()
+                    page.locator('[data-guidance-sidebar]').evaluate("""async el => {
+                        await Promise.all(el.getAnimations().map(animation => animation.finished));
+                    }""")
+                    page.locator('[data-guidance-rail] [data-guidance-toggle]').click()
+                    expect(panel).to_be_visible()
+                    widths = panel.evaluate("""async el => {
+                        const widths = [el.clientWidth];
+                        const sidebar = el.closest('[data-guidance-sidebar]');
+                        while (sidebar.getAnimations().length) {
+                            await new Promise(requestAnimationFrame);
+                            widths.push(el.clientWidth);
+                        }
+                        return widths;
+                    }""")
+                    self.assertTrue(all(width == original_width for width in widths), widths)
+                    page.set_viewport_size({'width': 390, 'height': 844})
+                    page.locator('[data-guidance-mobile-toggle]').click()
+                    expect(page.locator('[data-guidance-sidebar]')).to_have_class('peertrain-guidance-sidebar is-mobile-open')
+                    note = guidance.locator('.peertrain-guidance-note')
+                    note.scroll_into_view_if_needed()
+                    expect(note).to_be_in_viewport()
+                    self.assertTrue(page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'))
+                    page.keyboard.press('Escape')
+                    expect(page.locator('[data-guidance-mobile-toggle]')).to_have_attribute('aria-expanded', 'false')
+                    for route in held_openings:
+                        route.abort()
+                    held_openings.clear()
+            browser.close()
+
     def test_scenario_cards_fit_desktop_and_wrap_on_narrow_screens(self):
         from django.core.management import call_command
         from playwright.sync_api import sync_playwright, expect
@@ -265,7 +339,7 @@ class BrowserUpdateTests(StaticLiveServerTestCase):
                             const computed = getComputedStyle(document.querySelector(selector));
                             return properties.map(property => computed[property]);
                         };
-                        return [style('.peertrain-guidance-section summary'), style('.peertrain-feedback-section-title')];
+                        return [style('.peertrain-guidance-section h3'), style('.peertrain-feedback-section-title')];
                     }""")
                     assert font_styles[0] == font_styles[1], font_styles
                     expect(page.locator('[data-turn-feedback]')).to_have_count(2)

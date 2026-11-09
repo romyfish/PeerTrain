@@ -683,7 +683,8 @@
           data.set("persona", document.getElementById("student-mode").checked ? "student" : "pso");
           const character = await requestChatJson(data);
           updateBoundaryCoach(character.boundary_coach_html, 0);
-          pendingTemplate.content.querySelector(".peertrain-chat-speaker").textContent = `${character.name} (AI-simulated)`;
+          document.querySelector("[data-practice-guidance]").innerHTML = character.guidance_html;
+          pendingTemplate.content.querySelector(".peertrain-chat-speaker").textContent = character.name;
           pendingTemplate.content.querySelector(".peertrain-ai-avatar").src = character.portrait;
           modal.hide();
           await startRoleplay();
