@@ -1736,12 +1736,11 @@ class PageSmokeTests(TestCase):
 
         self.assertIn("app.dataset.chatUrl || chatForm?.getAttribute", script)
         self.assertNotIn("fetch(chatForm.action", script)
-        self.assertIn('querySelectorAll("[data-user-turn-count]")', script)
         self.assertNotIn('querySelectorAll("[data-user-turns]")', script)
 
         self.client.force_login(self.trainee)
         response = self.client.get(reverse("chat", kwargs={"session_id": self.chat_session.id}))
-        self.assertContains(response, "data-user-turn-count", count=1, html=False)
+        self.assertNotContains(response, "data-user-turn-count")
 
     def test_chat_page_renders_one_responsive_boundary_coach(self):
         self.client.force_login(self.trainee)

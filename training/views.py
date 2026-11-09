@@ -315,6 +315,8 @@ def chat_view(request, session_id):
     )
     if session.status == TrainingSession.Statuses.COMPLETED:
         if request.method == "POST" and is_ajax:
+            if request.POST.get("action") == "finish":
+                return JsonResponse({"ok": True, "review_url": reverse("session_review", args=[session.id])})
             return _chat_json_error(
                 "This session has already been completed.",
                 409,
@@ -332,6 +334,8 @@ def chat_view(request, session_id):
 
     if request.method == "POST":
         session.refresh_from_db()
+        if session.status == 'COMPLETED' and is_ajax and request.POST.get("action") == "finish":
+            return JsonResponse({"ok": True, "review_url": reverse("session_review", args=[session.id])})
         if session.status == 'PAUSED':
             return _chat_json_error(PAUSE_TITLE + "\n" + PAUSE_MESSAGE, 409, code='session_paused', can_send=False, session=session, request=request)
         if session.status != 'IN_PROGRESS':
@@ -356,6 +360,8 @@ def chat_view(request, session_id):
             with transaction.atomic():
                 lock_session(session)
                 session.refresh_from_db()
+                if session.status == 'COMPLETED' and is_ajax:
+                    return JsonResponse({"ok": True, "review_url": reverse("session_review", args=[session.id])})
                 if session.status != 'IN_PROGRESS' or session.processing:
                     return _chat_json_error('This session cannot advance.', 409, can_send=False)
                 latest = session.messages.last()
@@ -365,6 +371,8 @@ def chat_view(request, session_id):
                 session.end_time = timezone.now()
                 session.ended_early = user_turns < 4
                 session.save(update_fields=['status', 'end_time', 'ended_early'])
+            if is_ajax:
+                return JsonResponse({"ok": True, "review_url": reverse("session_review", args=[session.id])})
             return redirect("session_review", session_id=session.id)
 
         if action == "select_persona":

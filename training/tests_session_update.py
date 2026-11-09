@@ -50,6 +50,39 @@ class SessionUpdateTests(TestCase):
     def verdict(self, verdict='ALLOW', reply=None):
         return tasks.SafetyResult(verdict=verdict, reason_codes=[], brief_reason='Case consistent.', safe_reply=reply)
 
+    def test_ajax_completion_is_idempotent_and_leaves_generation_to_review(self):
+        for turns in (1, 3, 4, 20):
+            with self.subTest(turns=turns):
+                session = TrainingSession.objects.create(user=self.user, scenario=self.scenario, persona='pso')
+                for turn in range(turns):
+                    Message.objects.create(session=session, sender_type='USER', content=f'Reply {turn}')
+                    Message.objects.create(session=session, sender_type='AI', content='Thank you.')
+                url = reverse('chat', args=[session.pk])
+                with patch('training.views.generate_feedback') as generate:
+                    first = self.client.post(url, {'action': 'finish'}, **self.headers)
+                    session.refresh_from_db()
+                    end_time = session.end_time
+                    second = self.client.post(url, {'action': 'finish'}, **self.headers)
+                    generate.assert_not_called()
+                self.assertEqual(first.status_code, 200)
+                self.assertEqual(first.json(), {'ok': True, 'review_url': reverse('session_review', args=[session.pk])})
+                self.assertEqual(second.json(), first.json())
+                session.refresh_from_db()
+                self.assertEqual(session.status, 'COMPLETED')
+                self.assertEqual(session.ended_early, turns < 4)
+                self.assertEqual(session.end_time, end_time)
+                self.assertFalse(Feedback.objects.filter(session=session).exists())
+
+    def test_completion_validation_preserves_active_session(self):
+        response = self.client.post(self.chat_url, {'action': 'finish'}, **self.headers)
+        self.assertEqual(response.status_code, 409)
+        self.message()
+        response = self.client.post(self.chat_url, {'action': 'finish'}, **self.headers)
+        self.assertEqual(response.status_code, 409)
+        self.session.refresh_from_db()
+        self.assertEqual(self.session.status, 'IN_PROGRESS')
+        self.assertIsNone(self.session.end_time)
+
     def test_assessment_and_none_saved_without_visibility_context(self):
         message = self.message()
         for kind in ('affirmation', 'none'):

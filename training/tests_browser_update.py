@@ -30,6 +30,141 @@ BROWSER = next((str(p) for p in (
 @override_settings(OPENAI_API_KEY='', GEMINI_API_KEY='',
                    PASSWORD_HASHERS=['django.contrib.auth.hashers.MD5PasswordHasher'])
 class BrowserUpdateTests(StaticLiveServerTestCase):
+    def test_session_navigation_completion_errors_and_review_transition(self):
+        from playwright.sync_api import sync_playwright, expect, Error
+
+        user = get_user_model().objects.create_user(username='completion-browser', role='TRAINEE')
+        scenario = Scenario.objects.create(title='Completion', boundary_type='AGENCY', estimated_duration_min=10)
+        self.client.force_login(user)
+        cookie = self.client.cookies[settings.SESSION_COOKIE_NAME].value
+        sessions = []
+        for turns in (1, 4, 20):
+            session = TrainingSession.objects.create(user=user, scenario=scenario, persona='pso')
+            for turn in range(turns):
+                Message.objects.create(session=session, sender_type='USER', content=f'Reply {turn}')
+                Message.objects.create(session=session, sender_type='AI', content='Thank you.')
+            Feedback.objects.create(session=session, overall_score=3, strengths='Listened.', improvements='Consider timing.')
+            sessions.append((turns, session))
+        leave_session = TrainingSession.objects.create(user=user, scenario=scenario, persona='pso')
+        Message.objects.create(session=leave_session, sender_type='USER', content='Hello.')
+        Message.objects.create(session=leave_session, sender_type='AI', content='Thank you.')
+        with sync_playwright() as driver:
+            browser = driver.chromium.launch(executable_path=BROWSER, headless=True)
+            context = browser.new_context(viewport={'width': 1440, 'height': 900})
+            context.add_cookies([{'name': settings.SESSION_COOKIE_NAME, 'value': cookie, 'url': self.live_server_url}])
+            page = context.new_page()
+            page.set_default_timeout(10000)
+            native_dialogs = []
+            def dismiss_native(dialog):
+                native_dialogs.append(dialog.type)
+                dialog.dismiss()
+            page.on('dialog', dismiss_native)
+            for turns, session in sessions:
+                with self.subTest(turns=turns):
+                    chat_url = self.live_server_url + reverse('chat', args=[session.pk])
+                    review_url = self.live_server_url + reverse('session_review', args=[session.pk])
+                    page.goto(self.live_server_url)
+                    page.goto(chat_url)
+                    expect(page.locator('[data-user-turn-count]')).to_have_count(0)
+                    expect(page.locator('[data-chat-finish-label]')).to_have_text('End session')
+                    dialog = page.locator('[data-session-dialog]')
+                    for link in ('.peertrain-topnav-brand', '.peertrain-topnav-desktop .peertrain-topnav-link'):
+                        page.locator(link).first.click()
+                        expect(dialog).to_be_visible()
+                        expect(dialog).to_contain_text('Session in progress')
+                        page.get_by_role('button', name='Back to conversation', exact=True).click()
+                        self.assertEqual(page.url, chat_url)
+                    page.locator('.peertrain-account-menu-button').click()
+                    page.locator('.peertrain-account-dropdown a').click()
+                    expect(dialog).to_be_visible()
+                    page.locator('[data-session-continue]').click()
+                    page.set_viewport_size({'width': 390, 'height': 844})
+                    page.get_by_role('button', name='Open navigation menu').click()
+                    page.locator('.peertrain-mobile-logout').click()
+                    expect(dialog).to_be_visible()
+                    page.locator('[data-session-continue]').click()
+                    page.get_by_role('button', name='Close navigation menu').click()
+                    expect(page.locator('#peertrain-mobile-navigation')).not_to_be_visible()
+                    page.locator('[data-guidance-mobile-toggle]').click()
+                    expect(page.locator('[data-guidance-sidebar]')).to_have_class('peertrain-guidance-sidebar is-mobile-open')
+                    page.keyboard.press('Escape')
+                    self.assertTrue(page.evaluate("""() => {
+                        const event = new Event('beforeunload', {cancelable: true});
+                        window.dispatchEvent(event); return event.defaultPrevented;
+                    }"""))
+                    for navigate in (page.reload, page.go_back):
+                        previous = len(native_dialogs)
+                        try:
+                            navigate(timeout=2000)
+                        except Error:
+                            pass  # Dismissing beforeunload aborts the navigation.
+                        self.assertEqual(native_dialogs[previous:], ['beforeunload'])
+                        self.assertEqual(page.url, chat_url)
+                    pending_finish = []
+                    pending_review = []
+                    def hold_finish(route):
+                        pending_finish.append(route)
+                    page.route(chat_url, hold_finish)
+                    page.route(review_url, lambda route: pending_review.append(route))
+                    def end_session():
+                        page.locator('[data-chat-finish]').click()
+                        if turns < 20:
+                            expect(dialog).to_be_visible()
+                            expect(dialog).to_contain_text('End this session early?' if turns < 4 else 'End this session?')
+                            if turns < 4:
+                                expect(dialog).to_contain_text('feedback may be based on limited evidence')
+                            page.locator('[data-session-confirm]').click()
+                        expect(page.locator('[data-completion-overlay]')).to_be_visible()
+                        page.wait_for_function('document.querySelector("[data-chat-form]").getAttribute("aria-busy") === "true"')
+                        # Let the route callback run before inspecting the held request.
+                        page.wait_for_timeout(50)
+                    end_session()
+                    self.assertEqual(len(pending_finish), 1)
+                    page.keyboard.press('Escape')
+                    expect(page.locator('[data-completion-overlay]')).to_be_visible()
+                    pending_finish.pop().fulfill(status=503, content_type='application/json', body='{"ok":false,"error":"Please try again."}')
+                    expect(page.locator('[data-completion-overlay]')).not_to_be_visible()
+                    expect(page.locator('[data-chat-error]')).to_contain_text("We couldn't complete your session")
+                    expect(page.locator('[data-chat-finish]')).to_be_enabled()
+                    page.locator('.peertrain-topnav-brand').click()
+                    expect(dialog).to_be_visible()
+                    page.locator('[data-session-continue]').click()
+                    end_session()
+                    route = pending_finish.pop()
+                    response = route.fetch()
+                    self.assertTrue(response.ok)
+                    # Simulate losing the response after the server committed completion.
+                    route.fulfill(status=503, content_type='application/json', body='{"ok":false,"error":"Connection interrupted."}')
+                    expect(page.locator('[data-completion-overlay]')).not_to_be_visible()
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        executor.submit(session.refresh_from_db).result()
+                    self.assertEqual(session.status, 'COMPLETED')
+                    end_session()
+                    route = pending_finish.pop()
+                    route.fulfill(response=route.fetch())
+                    page.wait_for_timeout(100)
+                    self.assertEqual(len(pending_review), 1)
+                    with page.expect_navigation(url=review_url):
+                        pending_review.pop().continue_()
+                    self.assertEqual(page.url, review_url)
+                    page.unroute(chat_url)
+                    page.unroute(review_url)
+                    page.set_viewport_size({'width': 1440, 'height': 900})
+            self.assertEqual(native_dialogs, ['beforeunload'] * 6)
+            page.goto(self.live_server_url + reverse('chat', args=[leave_session.pk]))
+            history_url = self.live_server_url + reverse('history')
+            page.locator('.peertrain-topnav-desktop a[href="' + reverse('history') + '"]').click()
+            expect(page.locator('[data-session-dialog]')).to_be_visible()
+            expect(page.locator('[data-session-dialog-message] strong')).to_have_text('End session')
+            with page.expect_navigation(url=history_url):
+                page.get_by_role('button', name='Leave anyway', exact=True).click()
+            self.assertEqual(native_dialogs, ['beforeunload'] * 6)
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                executor.submit(leave_session.refresh_from_db).result()
+            self.assertEqual(leave_session.status, 'IN_PROGRESS')
+            self.assertIsNone(leave_session.end_time)
+            browser.close()
+
     def test_guidance_persona_refresh_pending_labels_and_responsive_controls(self):
         from playwright.sync_api import sync_playwright, expect
         from training.prompts import ROLEPLAY_SCENARIOS

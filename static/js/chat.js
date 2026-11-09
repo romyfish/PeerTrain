@@ -162,15 +162,12 @@
   const updateTurnCount = (userTurns) => {
     currentUserTurns = Number(userTurns) || 0;
     app.dataset.userTurns = String(currentUserTurns);
-    document.querySelectorAll("[data-user-turn-count]").forEach((element) => {
-      element.textContent = String(currentUserTurns);
-    });
     if (finishButton) {
       finishButton.hidden = currentUserTurns < 1;
       finishButton.dataset.confirmEarly = currentUserTurns < 4 ? "true" : "false";
     }
     if (finishLabel) {
-      finishLabel.textContent = currentUserTurns < 4 ? "End early" : "Finish session";
+      finishLabel.textContent = "End session";
     }
   };
 
@@ -389,7 +386,7 @@
     updateBoundaryCoach(payload.boundary_coach_html, payload.boundary_score);
     showNotice(joinedNotices(notice, payload.notice));
     if (!canSend) {
-      showNotice("Maximum exchanges reached. Finish the session to review your feedback.");
+      showNotice("Maximum exchanges reached. End session to review your feedback.");
     }
   };
 
@@ -508,6 +505,124 @@
     }
   };
 
+  const sessionDialog = document.querySelector("[data-session-dialog]");
+  const completionOverlay = document.querySelector("[data-completion-overlay]");
+  const confirmCompletion = document.querySelector("[data-session-confirm]");
+  const backToConversation = document.querySelector("[data-session-continue]");
+  const leaveAnyway = document.querySelector("[data-session-leave]");
+  let completionPending = false;
+  let sessionCompleted = false;
+  let pendingNavigationUrl = null;
+  let navigationApproved = false;
+
+  const protectNavigation = () => !navigationApproved && !sessionCompleted && (currentUserTurns > 0 || (pendingSend && requestPending))
+    && app.dataset.sessionStatus === "IN_PROGRESS" && !practicePaused;
+
+  const showSessionDialog = (ending = false) => {
+    const earlyEnding = ending && currentUserTurns < 4;
+    sessionDialog.dataset.mode = ending ? (earlyEnding ? "early" : "end") : "navigation";
+    document.querySelector("[data-session-dialog-title]").textContent = ending
+      ? (currentUserTurns < 4 ? "End this session early?" : "End this session?")
+      : "Session in progress";
+    const dialogMessage = document.querySelector("[data-session-dialog-message]");
+    dialogMessage.textContent = ending
+      ? (currentUserTurns < 4
+        ? "You can still review your conversation, but the feedback may be based on limited evidence."
+        : "End your conversation and prepare your session review?")
+      : "Your practice session hasn't ended yet. Leaving now may interrupt your session and lose the full session review.\n\nPlease select End session before leaving.";
+    if (!ending) {
+      const emphasis = document.createElement("strong");
+      emphasis.className = "peertrain-session-dialog-emphasis";
+      emphasis.textContent = "End session";
+      dialogMessage.replaceChildren(
+        "Your practice session hasn't ended yet. Leaving now may interrupt your session and lose the full session review.\n\nPlease select ",
+        emphasis,
+        " before leaving.",
+      );
+    }
+    confirmCompletion.hidden = !ending;
+    leaveAnyway.hidden = ending;
+    backToConversation.classList.toggle("peertrain-btn-primary", !ending || earlyEnding);
+    backToConversation.classList.toggle("peertrain-session-button-outline", ending && !earlyEnding);
+    confirmCompletion.classList.toggle("peertrain-btn-primary", !earlyEnding);
+    confirmCompletion.classList.toggle("peertrain-session-button-outline", earlyEnding);
+    if (!sessionDialog.open) sessionDialog.showModal();
+  };
+
+  window.addEventListener("beforeunload", (event) => {
+    if (!protectNavigation()) return;
+    event.preventDefault();
+    event.returnValue = "";
+  });
+
+  // Capture links before desktop dropdown and mobile navigation handlers.
+  const interceptNavigation = (event) => {
+    const link = event.target.closest("a[href]");
+    if (!link || completionPending || !protectNavigation()) return;
+    const href = link.getAttribute("href");
+    if (!href || href.startsWith("#") || link.hasAttribute("download")
+      || link.matches("[data-reload-conversation], [data-bs-toggle]")) return;
+    const destination = new URL(link.href, window.location.href);
+    if (destination.origin !== window.location.origin) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    pendingNavigationUrl = destination.href;
+    showSessionDialog();
+  };
+  document.addEventListener("click", interceptNavigation, true);
+  document.addEventListener("auxclick", (event) => {
+    if (event.button === 1) interceptNavigation(event);
+  }, true);
+
+  window.addEventListener("pageshow", (event) => {
+    navigationApproved = false;
+    // A browser-history restore must not leave a completed chat frozen under its overlay.
+    if (event.persisted && sessionCompleted) window.location.reload();
+  });
+
+  backToConversation.addEventListener("click", () => {
+    pendingNavigationUrl = null;
+    sessionDialog.close();
+  });
+  sessionDialog.addEventListener("close", () => { pendingNavigationUrl = null; });
+  leaveAnyway.addEventListener("click", () => {
+    if (!pendingNavigationUrl || completionPending) return;
+    const destination = pendingNavigationUrl;
+    navigationApproved = true;
+    sessionDialog.close();
+    window.location.assign(destination);
+  });
+  completionOverlay.addEventListener("cancel", (event) => event.preventDefault());
+
+  const completeSession = async () => {
+    if (requestPending || completionPending) return;
+    // Capture the form before disabling its controls.
+    const data = createActionData("finish");
+    sessionDialog.close();
+    clearError();
+    completionPending = true;
+    setControlsDisabled(true);
+    completionOverlay.showModal();
+    try {
+      const payload = await requestChatJson(data);
+      const reviewUrl = new URL(payload.review_url, window.location.href);
+      if (!payload.review_url || reviewUrl.origin !== window.location.origin) {
+        throw new Error("The review address was unavailable. Please try End session again.");
+      }
+      // Keep the overlay open throughout the review page's server render.
+      sessionCompleted = true;
+      window.location.assign(reviewUrl.href);
+    } catch (error) {
+      sessionCompleted = false;
+      completionPending = false;
+      completionOverlay.close();
+      setControlsDisabled(false);
+      showError(`We couldn't complete your session. ${error.message} You can try End session again.`, { showReload: true });
+      errorBox?.scrollIntoView({ block: "nearest" });
+    }
+  };
+  confirmCompletion.addEventListener("click", completeSession);
+
   const handleChatSubmit = async (event) => {
     event.preventDefault();
     if (!chatForm || requestPending) return;
@@ -517,18 +632,11 @@
     if (practicePaused) return;
     if (action === "finish") {
       if (currentUserTurns < 1) return;
-      if (
-        currentUserTurns < 4
-        && !window.confirm("End this session early? The feedback may have limited evidence.")
-      ) {
-        return;
+      if (currentUserTurns >= maxExchanges && maxExchanges > 0) {
+        await completeSession();
+      } else {
+        showSessionDialog(true);
       }
-      const finishAction = document.createElement("input");
-      finishAction.type = "hidden";
-      finishAction.name = "action";
-      finishAction.value = "finish";
-      chatForm.appendChild(finishAction);
-      chatForm.submit();
       return;
     }
     if (needsOpening) {
@@ -536,7 +644,7 @@
       return;
     }
     if (!canSend) {
-      showError("Maximum exchanges reached. Finish the session to review your feedback.");
+      showError("Maximum exchanges reached. End session to review your feedback.");
       return;
     }
     clearError();

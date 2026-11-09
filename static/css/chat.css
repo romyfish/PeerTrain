@@ -1433,3 +1433,44 @@
 .peertrain-reply-feedback-title { margin-top: .8rem; }
 .peertrain-live-overall [data-boundary-status] { display: flex; width: 100%; padding: 0; }
 .peertrain-live-overall .peertrain-assessment-icon { width: 2.4rem; height: 2.4rem; }
+
+.peertrain-session-dialog {
+  width: min(38rem, calc(100% - 2rem));
+  padding: 1.75rem;
+  border: 1px solid var(--peertrain-border);
+  border-radius: 1rem;
+  color: var(--peertrain-text);
+  background: #fff;
+  box-shadow: 0 1rem 3rem rgba(15, 23, 42, .18);
+}
+.peertrain-session-dialog::backdrop { background: rgba(15, 23, 42, .32); }
+.peertrain-session-dialog p { white-space: pre-line; line-height: 1.6; }
+.peertrain-session-dialog-actions { display: flex; justify-content: space-between; align-items: stretch; gap: .75rem; }
+.peertrain-session-dialog-actions .btn {
+  border-radius: 0.75rem;
+  padding: 0.82rem 1.35rem;
+}
+.peertrain-session-dialog-actions .peertrain-btn-primary {
+  background: #1a73e8;
+  border-color: #1a73e8;
+  color: #fff;
+}
+.peertrain-session-button-outline {
+  color: var(--peertrain-primary);
+  border: 1px solid var(--peertrain-primary);
+  background: #fff;
+}
+.peertrain-session-button-outline:hover,
+.peertrain-session-button-outline:focus-visible {
+  color: var(--peertrain-primary-dark);
+  border-color: var(--peertrain-primary-dark);
+  background: #eff6ff;
+}
+.peertrain-session-dialog-emphasis { color: var(--peertrain-primary); font-weight: 700; }
+@media (max-width: 480px) {
+  .peertrain-session-dialog { padding: 1.25rem; }
+  .peertrain-session-dialog-actions .btn { font-size: .8125rem; }
+}
+.peertrain-completion-overlay { text-align: center; }
+.peertrain-completion-overlay .spinner-border { margin-bottom: 1.25rem; color: var(--peertrain-primary); }
+.peertrain-completion-overlay p { margin-bottom: 0; }

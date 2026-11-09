@@ -5,7 +5,7 @@
 {% block app_container_class %}peertrain-chat-page-container{% endblock %}
 
 {% block extra_head %}
-  <link href="{% static 'css/chat.css' %}?v=20261109-4" rel="stylesheet">
+  <link href="{% static 'css/chat.css' %}?v=20261109-7" rel="stylesheet">
   <link href="{% static 'css/assessment.css' %}?v=20261020-2" rel="stylesheet">
 {% endblock %}
 
@@ -18,6 +18,7 @@
   data-chat-app
   data-chat-url="{% url 'chat' session.id %}"
   data-session-id="{{ session.id }}"
+  data-session-status="{{ session.status }}"
   data-user-id="{{ request.user.id }}"
   data-user-turns="{{ user_turns }}"
   data-max-exchanges="{{ max_exchanges }}"
@@ -51,9 +52,6 @@
         <div class="peertrain-chat-heading">
           <div class="peertrain-chat-heading-copy">
             <h1 id="peertrain-chat-title">{{ session.scenario.display_title }}</h1>
-            <div class="peertrain-chat-focus-line">
-              <span><span data-user-turn-count>{{ user_turns }}</span>/{{ max_exchanges }} turns</span>
-            </div>
           </div>
         </div>
 
@@ -152,7 +150,7 @@
                 {% if user_turns < 1 %}hidden{% endif %}
                 {% if user_turns < 4 %}data-confirm-early="true"{% endif %}
               >
-                <span data-chat-finish-label>{% if user_turns < 4 %}End early{% else %}Finish session{% endif %}</span>
+                <span data-chat-finish-label>End session</span>
               </button>
               <button type="submit" name="action" value="send" class="peertrain-chat-send" data-chat-send {% if not can_send %}disabled{% endif %} aria-label="Send response">
                 <i class="bi bi-send" aria-hidden="true"></i>
@@ -228,6 +226,22 @@
   </div>
 
 </div>
+<dialog class="peertrain-session-dialog" data-session-dialog aria-labelledby="session-dialog-title" aria-describedby="session-dialog-message">
+  <h2 id="session-dialog-title" class="fs-5" data-session-dialog-title></h2>
+  <p id="session-dialog-message" data-session-dialog-message></p>
+  <div class="peertrain-session-dialog-actions">
+    <button type="button" class="btn peertrain-session-button-outline" data-session-leave hidden>Leave anyway</button>
+    <button type="button" class="btn peertrain-session-button-outline" data-session-continue autofocus>Back to conversation</button>
+    <button type="button" class="btn peertrain-btn-primary" data-session-confirm hidden>End session</button>
+  </div>
+</dialog>
+<dialog class="peertrain-session-dialog peertrain-completion-overlay" data-completion-overlay aria-labelledby="completion-title" aria-describedby="completion-description">
+  <div class="spinner-border" aria-hidden="true"></div>
+  <div role="status">
+    <h2 id="completion-title" class="fs-5">Preparing your session review...</h2>
+    <p id="completion-description">We're bringing together your conversation and feedback. This may take a moment.</p>
+  </div>
+</dialog>
 {% if needs_persona_selection %}
 <div class="modal fade" id="persona-selection" tabindex="-1" aria-labelledby="persona-selection-title" data-bs-backdrop="static" data-bs-keyboard="false">
   <div class="modal-dialog modal-dialog-centered">
@@ -251,5 +265,5 @@
 {% endblock %}
 
 {% block extra_scripts %}
-  <script src="{% static 'js/chat.js' %}?v=20261109-1"></script>
+  <script src="{% static 'js/chat.js' %}?v=20261109-3"></script>
 {% endblock %}
