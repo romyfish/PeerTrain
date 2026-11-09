@@ -130,6 +130,21 @@ def assessment_records(session):
         'trainee_message_id', 'overall_status_level', 'feedback_type', 'feedback_text', 'record', 'succeeded'))
 
 
+def assessor_state(session, message):
+    """Carry observed evidence and provisional status, never private continuation plans."""
+    evidence_fields = (
+        'relevant_dimensions', 'observed_evidence', 'opportunity_observed',
+        'confidence', 'review_flag', 'safety_flag', 'boundary_relevant',
+    )
+    return [{
+        'trainee_message_id': row.trainee_message_id,
+        'overall_status_level': row.overall_status_level,
+        'succeeded': row.succeeded,
+        'record': {key: row.record[key] for key in evidence_fields if key in row.record},
+    } for row in TurnAssessment.objects.filter(
+        trainee_message__session=session, trainee_message_id__lt=message.pk)]
+
+
 def assess_turn(session, message):
     token = session.processing_token
     session.refresh_from_db()
@@ -141,14 +156,17 @@ def assess_turn(session, message):
             raise PracticeFailure('HISTORICAL_ASSESSMENT_UNAVAILABLE')
         return existing
     token = session.processing_token
-    previous = assessment_records(session)
+    previous = assessor_state(session, message)
     context = dict(
         scenario_name=session.scenario.boundary_type.title(),
         scenario_training_focus={
             'AGENCY': 'Support Without Fixing', 'RELATIONSHIP': 'Care Without Overextending',
             'SAFETY': 'Staying with People in Distress',
         }.get(session.scenario.boundary_type, ''),
-        case_context=persona_prompt_for(session.scenario.boundary_type, session.persona),
+        # Only the service mode disclosed in the trainee UI, not persona fields
+        # (even "setting" may contain undisclosed facts or future developments).
+        case_context=('Appointment-based support mode. Help-seeker: University peer support service user.'
+                      if session.persona == 'student' else 'Help-seeker: Peer support community member.'),
         transcript=json.dumps(transcript(session, message), ensure_ascii=False),
         assessment_state=json.dumps(previous, ensure_ascii=False),
     )

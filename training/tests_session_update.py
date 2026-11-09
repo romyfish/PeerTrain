@@ -74,6 +74,76 @@ class SessionUpdateTests(TestCase):
                 tasks.assess_turn(self.session, self.message())
         self.assertFalse(TurnAssessment.objects.exists())
 
+    def test_assessment_context_uses_only_public_service_mode_and_dialogue(self):
+        first = self.message('Hello, I have been feeling lonely.', 'AI')
+        reply = self.message('Would you like to tell me more?')
+        disclosed = self.message('I worry about being left alone after appointments.', 'AI')
+        message = self.message()
+        expected_transcript = tasks.transcript(self.session, message)
+        for boundary, focus in (
+            ('AGENCY', 'Support Without Fixing'),
+            ('RELATIONSHIP', 'Care Without Overextending'),
+            ('SAFETY', 'Staying with People in Distress'),
+        ):
+            for persona in ('pso', 'student'):
+                with self.subTest(boundary=boundary, persona=persona):
+                    TurnAssessment.objects.all().delete()
+                    self.scenario.boundary_type = boundary
+                    self.scenario.save()
+                    self.session.persona = persona
+                    self.session.save()
+                    character = prompts.session_persona_for(boundary, persona)
+                    private = {key: f'PRIVATE {key}: introduce a future boundary challenge.'
+                               for key in character}
+                    with patch.dict(character, private), patch.dict(
+                        prompts.RELATIONSHIP_AVAILABILITY_GUIDANCE,
+                        {persona: 'PRIVATE future availability challenge'},
+                    ), patch.object(tasks, 'task_call', return_value=self.result()) as call:
+                        tasks.assess_turn(self.session, message)
+                    context = call.call_args.args[1]
+                    self.assertEqual(context['scenario_training_focus'], focus)
+                    self.assertEqual(json.loads(context['transcript']), expected_transcript)
+                    self.assertEqual([row['message_id'] for row in expected_transcript],
+                                     [first.pk, reply.pk, disclosed.pk, message.pk])
+                    self.assertEqual(context['case_context'],
+                        'Appointment-based support mode. Help-seeker: University peer support service user.'
+                        if persona == 'student' else 'Help-seeker: Peer support community member.')
+                    self.assertNotIn('PRIVATE', json.dumps(context))
+
+    def test_assessment_state_retains_evidence_and_status_without_private_plans(self):
+        previous = self.message()
+        record = self.result().model_dump()
+        record.update(roleplay_cue='PRIVATE cue: ask for personal contact next.',
+                      assessment_note='PRIVATE plan: escalate the next challenge.',
+                      future_development='PRIVATE future development',
+                      alternative_reply='PRIVATE suggested future reply',
+                      alternative_reason='PRIVATE future advice')
+        saved = TurnAssessment.objects.create(trainee_message=previous, overall_status_level=3,
+            feedback_type='affirmation', feedback_text='You invited their priorities.',
+            roleplay_cue='PRIVATE column cue', record=record)
+        message = self.message('What would feel helpful now?')
+        later = self.message('A future trainee turn')
+        TurnAssessment.objects.create(trainee_message=later, overall_status_level=5,
+            feedback_type='none', record={'observed_evidence': 'FUTURE evidence'})
+        with patch.object(tasks, 'task_call', return_value=self.result()) as call:
+            result = tasks.assess_turn(self.session, message)
+        context = call.call_args.args[1]
+        state = json.loads(context['assessment_state'])
+        self.assertEqual(len(state), 1)
+        self.assertEqual(state[0]['trainee_message_id'], previous.pk)
+        self.assertEqual(state[0]['overall_status_level'], 3)
+        self.assertTrue(state[0]['succeeded'])
+        self.assertEqual(state[0]['record'], {key: record[key] for key in (
+            'relevant_dimensions', 'observed_evidence', 'opportunity_observed',
+            'confidence', 'review_flag', 'safety_flag', 'boundary_relevant')})
+        self.assertNotIn('PRIVATE', json.dumps(context))
+        self.assertNotIn('FUTURE', json.dumps(context))
+        self.assertNotIn('roleplay_cue', context['assessment_state'])
+        saved.refresh_from_db()
+        self.assertEqual(saved.record, record)
+        self.assertEqual(saved.roleplay_cue, 'PRIVATE column cue')
+        self.assertEqual(result.record['roleplay_cue'], self.result().roleplay_cue)
+
     def test_assessment_stops_at_trainee_message(self):
         message = self.message()
         self.message('A later help-seeker reply', 'AI')
