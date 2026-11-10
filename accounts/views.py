@@ -8,10 +8,10 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from .forms import AdminRegistrationForm, LoginForm, TraineeRegistrationForm
 
 
-def _redirect_for_user(user):
+def _default_destination(user):
     if user.is_superuser or user.role == user.Roles.ADMIN:
-        return redirect("admin_dashboard")
-    return redirect("dashboard")
+        return "admin_users"
+    return settings.LOGIN_REDIRECT_URL
 
 
 def landing_view(request):
@@ -26,13 +26,13 @@ def login_view(request):
         next_url = ""
 
     if request.user.is_authenticated:
-        return redirect(next_url) if next_url else _redirect_for_user(request.user)
+        return redirect(next_url or _default_destination(request.user))
 
     if request.method == "POST":
         form = LoginForm(request.POST, initial={"request": request})
         if form.is_valid():
             login(request, form.user)
-            return redirect(next_url) if next_url else _redirect_for_user(form.user)
+            return redirect(next_url or _default_destination(form.user))
     else:
         form = LoginForm(initial={"request": request})
 
@@ -44,7 +44,7 @@ def login_view(request):
 
 def register_view(request):
     if request.user.is_authenticated:
-        return _redirect_for_user(request.user)
+        return redirect(_default_destination(request.user))
 
     if request.method == "POST":
         form = TraineeRegistrationForm(request.POST)
@@ -63,7 +63,7 @@ def register_view(request):
 
 def admin_register_view(request):
     if request.user.is_authenticated:
-        return _redirect_for_user(request.user)
+        return redirect(_default_destination(request.user))
 
     if request.method == "POST":
         form = AdminRegistrationForm(request.POST)

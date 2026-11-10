@@ -103,7 +103,7 @@ class AuthenticationFlowTests(TestCase):
         self.assertEqual(user.role, User.Roles.ADMIN)
         self.assertTrue(user.is_staff)
 
-    def test_login_redirects_by_role(self):
+    def test_login_defaults_to_landing_for_trainees_and_users_for_admins(self):
         trainee = self._create_user("trainee@example.com", User.Roles.TRAINEE)
         admin = self._create_user("admin@example.com", User.Roles.ADMIN)
 
@@ -111,7 +111,7 @@ class AuthenticationFlowTests(TestCase):
             reverse("login"),
             {"email": trainee.email, "password": "SecurePass123!"},
         )
-        self.assertRedirects(trainee_response, reverse("dashboard"))
+        self.assertRedirects(trainee_response, reverse("landing"))
 
         self.client.logout()
 
@@ -119,7 +119,17 @@ class AuthenticationFlowTests(TestCase):
             reverse("login"),
             {"email": admin.email, "password": "SecurePass123!"},
         )
-        self.assertRedirects(admin_response, reverse("admin_dashboard"))
+        self.assertRedirects(admin_response, reverse("admin_users"))
+
+        self.client.logout()
+        superuser = User.objects.create_superuser(
+            username="superuser@example.com", email="superuser@example.com",
+            password="SecurePass123!",
+        )
+        response = self.client.post(reverse("login"), {
+            "email": superuser.email, "password": "SecurePass123!",
+        })
+        self.assertRedirects(response, reverse("admin_users"))
 
     def test_login_does_not_queue_a_redundant_welcome_success_message(self):
         trainee = self._create_user("trainee@example.com", User.Roles.TRAINEE)
@@ -194,7 +204,7 @@ class AuthenticationFlowTests(TestCase):
                 response = self.client.post(reverse("login"), {
                     "email": trainee.email, "password": "SecurePass123!", "next": destination,
                 }, secure=True)
-                self.assertRedirects(response, reverse("dashboard"))
+                self.assertRedirects(response, reverse("landing"))
 
     def test_authenticated_login_respects_safe_next_url(self):
         trainee = self._create_user("trainee@example.com", User.Roles.TRAINEE)
@@ -202,7 +212,16 @@ class AuthenticationFlowTests(TestCase):
         response = self.client.get(reverse("login"), {"next": reverse("scenarios")})
         self.assertRedirects(response, reverse("scenarios"))
         response = self.client.get(reverse("login"), {"next": "https://example.com/"})
-        self.assertRedirects(response, reverse("dashboard"))
+        self.assertRedirects(response, reverse("landing"))
+
+    def test_authenticated_auth_pages_use_role_default_destination(self):
+        for role in (User.Roles.TRAINEE, User.Roles.ADMIN):
+            user = self._create_user(f"{role}@example.com", role)
+            self.client.force_login(user)
+            for page in ("login", "register", "admin_register"):
+                with self.subTest(role=role, page=page):
+                    destination = "admin_users" if role == User.Roles.ADMIN else "landing"
+                    self.assertRedirects(self.client.get(reverse(page)), reverse(destination))
 
     def test_homepage_is_available_with_existing_account_menu_for_both_roles(self):
         for role in (User.Roles.TRAINEE, User.Roles.ADMIN):
