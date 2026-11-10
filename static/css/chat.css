@@ -1444,6 +1444,9 @@
   box-shadow: 0 1rem 3rem rgba(15, 23, 42, .18);
 }
 .peertrain-session-dialog::backdrop { background: rgba(15, 23, 42, .32); }
+.peertrain-session-dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.peertrain-session-dialog-header h2 { margin: 0; }
+.peertrain-session-dialog-header .btn-close { flex: none; }
 .peertrain-session-dialog p { white-space: pre-line; line-height: 1.6; }
 .peertrain-session-dialog-actions { display: flex; justify-content: space-between; align-items: stretch; gap: .75rem; }
 .peertrain-session-dialog-actions .btn {
@@ -1465,6 +1468,28 @@
   color: var(--peertrain-primary-dark);
   border-color: var(--peertrain-primary-dark);
   background: #eff6ff;
+}
+.peertrain-session-button-danger {
+  color: #fff;
+  border: 1px solid var(--peertrain-danger);
+  background: var(--peertrain-danger);
+}
+.peertrain-session-button-danger:hover,
+.peertrain-session-button-danger:focus-visible {
+  color: #fff;
+  border-color: #b42318;
+  background: #b42318;
+}
+.peertrain-session-button-danger-outline {
+  color: var(--peertrain-danger);
+  border: 1px solid var(--peertrain-danger);
+  background: #fff;
+}
+.peertrain-session-button-danger-outline:hover,
+.peertrain-session-button-danger-outline:focus-visible {
+  color: #b42318;
+  border-color: #b42318;
+  background: #fff5f4;
 }
 .peertrain-session-dialog-emphasis { color: var(--peertrain-primary); font-weight: 700; }
 @media (max-width: 480px) {

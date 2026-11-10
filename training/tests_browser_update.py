@@ -131,11 +131,15 @@ class BrowserUpdateTests(StaticLiveServerTestCase):
                     expect(page.locator('[data-user-turn-count]')).to_have_count(0)
                     expect(page.locator('[data-chat-finish-label]')).to_have_text('End session')
                     dialog = page.locator('[data-session-dialog]')
-                    for link in ('.peertrain-topnav-brand', '.peertrain-topnav-desktop .peertrain-topnav-link'):
+                    for index, link in enumerate(('.peertrain-topnav-brand', '.peertrain-topnav-desktop .peertrain-topnav-link')):
                         page.locator(link).first.click()
                         expect(dialog).to_be_visible()
                         expect(dialog).to_contain_text('Session in progress')
-                        page.get_by_role('button', name='Back to conversation', exact=True).click()
+                        expect(page.locator('[data-session-continue]')).to_have_text('Continue session')
+                        self.assertEqual(page.locator('[data-session-continue]').evaluate('(button) => getComputedStyle(button).backgroundColor'), 'rgb(255, 255, 255)')
+                        self.assertEqual(page.locator('[data-session-leave]').evaluate('(button) => getComputedStyle(button).backgroundColor'), 'rgb(217, 48, 37)')
+                        page.locator('[data-session-close]' if index else '[data-session-continue]').click()
+                        expect(dialog).not_to_be_visible()
                         self.assertEqual(page.url, chat_url)
                     page.locator('.peertrain-account-menu-button').click()
                     page.locator('.peertrain-account-dropdown a').click()
@@ -174,8 +178,14 @@ class BrowserUpdateTests(StaticLiveServerTestCase):
                         if turns < 20:
                             expect(dialog).to_be_visible()
                             expect(dialog).to_contain_text('End this session early?' if turns < 4 else 'End this session?')
+                            expect(page.locator('[data-session-close]')).to_be_visible()
+                            expect(page.locator('[data-session-continue]')).to_have_text('Continue session')
                             if turns < 4:
                                 expect(dialog).to_contain_text('feedback may be based on limited evidence')
+                                self.assertEqual(page.locator('[data-session-continue]').evaluate('(button) => getComputedStyle(button).backgroundColor'), 'rgb(26, 115, 232)')
+                                self.assertEqual(page.locator('[data-session-confirm]').evaluate('(button) => getComputedStyle(button).color'), 'rgb(217, 48, 37)')
+                                self.assertEqual(page.locator('[data-session-confirm]').evaluate('(button) => getComputedStyle(button).borderTopColor'), 'rgb(217, 48, 37)')
+                                self.assertEqual(page.locator('[data-session-confirm]').evaluate('(button) => getComputedStyle(button).backgroundColor'), 'rgb(255, 255, 255)')
                             page.locator('[data-session-confirm]').click()
                         expect(page.locator('[data-completion-overlay]')).to_be_visible()
                         page.wait_for_function('document.querySelector("[data-chat-form]").getAttribute("aria-busy") === "true"')

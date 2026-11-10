@@ -523,6 +523,7 @@
   const completionOverlay = document.querySelector("[data-completion-overlay]");
   const confirmCompletion = document.querySelector("[data-session-confirm]");
   const backToConversation = document.querySelector("[data-session-continue]");
+  const closeSessionDialog = document.querySelector("[data-session-close]");
   const leaveAnyway = document.querySelector("[data-session-leave]");
   let completionPending = false;
   let sessionCompleted = false;
@@ -556,10 +557,10 @@
     }
     confirmCompletion.hidden = !ending;
     leaveAnyway.hidden = ending;
-    backToConversation.classList.toggle("peertrain-btn-primary", !ending || earlyEnding);
-    backToConversation.classList.toggle("peertrain-session-button-outline", ending && !earlyEnding);
+    backToConversation.classList.toggle("peertrain-btn-primary", earlyEnding);
+    backToConversation.classList.toggle("peertrain-session-button-outline", !earlyEnding);
     confirmCompletion.classList.toggle("peertrain-btn-primary", !earlyEnding);
-    confirmCompletion.classList.toggle("peertrain-session-button-outline", earlyEnding);
+    confirmCompletion.classList.toggle("peertrain-session-button-danger-outline", earlyEnding);
     if (!sessionDialog.open) sessionDialog.showModal();
   };
 
@@ -594,10 +595,12 @@
     if (event.persisted && sessionCompleted) window.location.reload();
   });
 
-  backToConversation.addEventListener("click", () => {
+  const continueSession = () => {
     pendingNavigationUrl = null;
     sessionDialog.close();
-  });
+  };
+  backToConversation.addEventListener("click", continueSession);
+  closeSessionDialog.addEventListener("click", continueSession);
   sessionDialog.addEventListener("close", () => { pendingNavigationUrl = null; });
   leaveAnyway.addEventListener("click", () => {
     if (!pendingNavigationUrl || completionPending) return;

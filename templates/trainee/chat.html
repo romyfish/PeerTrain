@@ -5,7 +5,7 @@
 {% block app_container_class %}peertrain-chat-page-container{% endblock %}
 
 {% block extra_head %}
-  <link href="{% static 'css/chat.css' %}?v=20261109-7" rel="stylesheet">
+  <link href="{% static 'css/chat.css' %}?v=20261110-2" rel="stylesheet">
   <link href="{% static 'css/assessment.css' %}?v=20261020-2" rel="stylesheet">
 {% endblock %}
 
@@ -227,11 +227,14 @@
 
 </div>
 <dialog class="peertrain-session-dialog" data-session-dialog aria-labelledby="session-dialog-title" aria-describedby="session-dialog-message">
-  <h2 id="session-dialog-title" class="fs-5" data-session-dialog-title></h2>
+  <div class="peertrain-session-dialog-header">
+    <h2 id="session-dialog-title" class="fs-5" data-session-dialog-title></h2>
+    <button type="button" class="btn-close" data-session-close aria-label="Close dialog"></button>
+  </div>
   <p id="session-dialog-message" data-session-dialog-message></p>
   <div class="peertrain-session-dialog-actions">
-    <button type="button" class="btn peertrain-session-button-outline" data-session-leave hidden>Leave anyway</button>
-    <button type="button" class="btn peertrain-session-button-outline" data-session-continue autofocus>Back to conversation</button>
+    <button type="button" class="btn peertrain-session-button-danger" data-session-leave hidden>Leave anyway</button>
+    <button type="button" class="btn peertrain-session-button-outline" data-session-continue autofocus>Continue session</button>
     <button type="button" class="btn peertrain-btn-primary" data-session-confirm hidden>End session</button>
   </div>
 </dialog>
@@ -265,5 +268,5 @@
 {% endblock %}
 
 {% block extra_scripts %}
-  <script src="{% static 'js/chat.js' %}?v=20261109-5"></script>
+  <script src="{% static 'js/chat.js' %}?v=20261110-2"></script>
 {% endblock %}
