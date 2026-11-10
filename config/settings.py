@@ -33,6 +33,7 @@ SECRET_KEY = os.getenv(
     "django-insecure-peertrain-dev-key-change-me",
 )
 DEBUG = os.getenv("DEBUG", "true").lower() == "true"
+SHOW_DEMO_ACCOUNTS = _bool_env("SHOW_DEMO_ACCOUNTS", str(DEBUG))
 ALLOWED_HOSTS = _csv_env("ALLOWED_HOSTS", "127.0.0.1,localhost")
 CSRF_TRUSTED_ORIGINS = list(
     dict.fromkeys(
@@ -90,7 +91,7 @@ WSGI_APPLICATION = "config.wsgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        "NAME": os.getenv("DJANGO_DB_PATH") or BASE_DIR / "db.sqlite3",
     }
 }
 

@@ -7,3 +7,6 @@ staticfiles/
 .secrets/
 backups/
 runserver.*.log
+deployment/*.sqlite3
+deployment/*.sqlite3-*
+deployment/*.manifest.json

@@ -1,4 +1,5 @@
 from django.contrib import messages
+from django.conf import settings
 from django.contrib.auth import login, logout
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import redirect, render
@@ -35,7 +36,10 @@ def login_view(request):
     else:
         form = LoginForm(initial={"request": request})
 
-    return render(request, "auth/login.html", {"form": form, "next": next_url})
+    return render(request, "auth/login.html", {
+        "form": form, "next": next_url,
+        "show_demo_accounts": settings.SHOW_DEMO_ACCOUNTS,
+    })
 
 
 def register_view(request):

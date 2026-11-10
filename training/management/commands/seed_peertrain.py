@@ -75,6 +75,19 @@ class Command(BaseCommand):
         trainee.set_password("password123")
         trainee.save()
 
+        teo, _ = user_model.objects.update_or_create(
+            email="teo.wang@university.ac.uk",
+            defaults={
+                "username": "teo.wang@university.ac.uk",
+                "first_name": "Teo",
+                "last_name": "Wang",
+                "role": user_model.Roles.TRAINEE,
+                "is_active": True,
+            },
+        )
+        teo.set_password("password123")
+        teo.save()
+
         admin_user, _ = user_model.objects.update_or_create(
             email="admin@university.ac.uk",
             defaults={

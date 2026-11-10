@@ -26,11 +26,13 @@
           {% if form.non_field_errors %}<div class="text-danger small">{{ form.non_field_errors|join:", " }}</div>{% endif %}
           <button type="submit" class="btn peertrain-btn-primary btn-lg">Log In</button>
         </form>
+        {% if show_demo_accounts %}
         <div class="peertrain-muted-panel mt-4">
           <div class="fw-semibold text-dark mb-2">Demo accounts</div>
           <div class="small text-muted mb-1">Trainee: alex.chen@university.ac.uk / password123</div>
           <div class="small text-muted">Admin: admin@university.ac.uk / password123</div>
         </div>
+        {% endif %}
       </div>
       <p class="text-center text-muted small mt-4 mb-0">
         Don't have an account?
