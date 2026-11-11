@@ -347,6 +347,53 @@ class BrowserUpdateTests(StaticLiveServerTestCase):
                             self.assertLessEqual(bottom_gap, 80)
             browser.close()
 
+    def test_review_cards_use_content_height_and_give_remaining_space_to_conversation(self):
+        from playwright.sync_api import sync_playwright
+
+        user = get_user_model().objects.create_user(username='review-layout-browser', role='TRAINEE')
+        scenario = Scenario.objects.create(title='Layout', boundary_type='AGENCY', estimated_duration_min=10)
+        sessions = []
+        for overview in ('Brief feedback.', 'Detailed feedback. ' * 250):
+            session = TrainingSession.objects.create(user=user, scenario=scenario, persona='pso', status='COMPLETED')
+            Feedback.objects.create(session=session, overview=overview, strengths='Listened well.', improvements='Ask another question.')
+            Message.objects.create(session=session, sender_type='AI', content='Opening disclosure.')
+            sessions.append(session)
+        self.client.force_login(user)
+        cookie = self.client.cookies[settings.SESSION_COOKIE_NAME].value
+
+        with sync_playwright() as driver:
+            browser = driver.chromium.launch(executable_path=BROWSER, headless=True)
+            context = browser.new_context(viewport={'width': 1920, 'height': 1200})
+            context.add_cookies([{'name': settings.SESSION_COOKIE_NAME, 'value': cookie, 'url': self.live_server_url}])
+            page = context.new_page()
+            for width, height in ((2560, 1440), (1920, 1200), (1440, 900), (1100, 650)):
+                page.set_viewport_size({'width': width, 'height': height})
+                for index, session in enumerate(sessions):
+                    page.goto(self.live_server_url + reverse('session_review', args=[session.pk]))
+                    dimensions = page.evaluate('''() => {
+                        const feedback = document.querySelector('.review-feedback');
+                        const overview = document.querySelector('.review-overview');
+                        const content = document.querySelector('.review-overview-content');
+                        const conversation = document.querySelector('.review-conversation');
+                        return {
+                            feedbackHeight: feedback.getBoundingClientRect().height,
+                            overviewHeight: overview.getBoundingClientRect().height,
+                            contentHeight: content.clientHeight,
+                            contentScrollHeight: content.scrollHeight,
+                            contentEmptySpace: content.getBoundingClientRect().bottom - content.lastElementChild.getBoundingClientRect().bottom,
+                            conversationHeight: conversation.getBoundingClientRect().height,
+                        };
+                    }''')
+                    self.assertLessEqual(dimensions['overviewHeight'], dimensions['feedbackHeight'] * .5 + 1)
+                    if index == 0:
+                        self.assertLessEqual(dimensions['contentEmptySpace'], 4)
+                        if height >= 900:
+                            self.assertGreater(dimensions['conversationHeight'], dimensions['overviewHeight'])
+                    else:
+                        self.assertGreater(dimensions['contentScrollHeight'], dimensions['contentHeight'])
+                    self.assertGreater(dimensions['conversationHeight'], 0)
+            browser.close()
+
     def test_review_alternative_navigation_scopes_scroll_and_supports_keyboard_and_reduced_motion(self):
         from playwright.sync_api import sync_playwright, expect
         user = get_user_model().objects.create_user(username='alternative-browser', role='TRAINEE')
@@ -426,7 +473,7 @@ class BrowserUpdateTests(StaticLiveServerTestCase):
                         const card = container.querySelector(`[data-alternative-card-turn="${number}"]`);
                         const bounds = container.getBoundingClientRect();
                         const target = card.getBoundingClientRect();
-                        return Math.abs((target.top + target.bottom - bounds.top - bounds.bottom) / 2) < 3;
+                        return target.top >= bounds.top - 2 && target.bottom <= bounds.bottom + 2;
                     }''', arg=number)
                     assert page.evaluate('({x: scrollX, y: scrollY})') == before
                     assert abs(nav.bounding_box()['y'] - nav_top) < 1
