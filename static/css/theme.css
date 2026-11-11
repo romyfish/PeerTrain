@@ -1185,7 +1185,8 @@ body.peertrain-body {
   flex-direction: column;
   align-items: center;
   justify-content: space-between;
-  gap: clamp(0.75rem, 2vh, 1.5rem);
+  --scenario-card-gap: clamp(0.75rem, 2vh, 1.5rem);
+  gap: var(--scenario-card-gap);
   background: var(--scenario-surface);
   border-color: var(--scenario-border);
   border-radius: 1.5rem;
@@ -1208,6 +1209,33 @@ body.peertrain-body {
   .peertrain-scenario-visual {
     transform: translateY(clamp(0.5rem, 2vh, 1.25rem));
   }
+}
+
+@media (min-width: 992px) and (min-height: 850px) {
+  .peertrain-card.scenario-card:not(.peertrain-coming-soon) {
+    gap: 0;
+  }
+
+  .peertrain-card.scenario-card:not(.peertrain-coming-soon) .peertrain-scenario-visual {
+    flex: 1 1 calc(clamp(6rem, 7vw, 7rem) + var(--scenario-card-gap));
+    height: auto;
+    min-height: calc(clamp(6rem, 7vw, 7rem) + var(--scenario-card-gap));
+    transform: none;
+  }
+
+  .peertrain-card.scenario-card:not(.peertrain-coming-soon) .peertrain-scenario-icon {
+    height: clamp(6rem, 7vw, 7rem);
+    flex: none;
+  }
+
+  .peertrain-card.scenario-card:not(.peertrain-coming-soon) .peertrain-scenario-copy { order: 1; }
+  .peertrain-card.scenario-card:not(.peertrain-coming-soon)::after {
+    content: "";
+    flex: 1 1 var(--scenario-card-gap);
+    min-height: var(--scenario-card-gap);
+    order: 2;
+  }
+  .peertrain-card.scenario-card:not(.peertrain-coming-soon) .peertrain-scenario-form { order: 3; }
 }
 
 .peertrain-card.scenario-card.scenario-theme-emotional {

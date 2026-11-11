@@ -325,7 +325,7 @@ class BrowserUpdateTests(StaticLiveServerTestCase):
             context = browser.new_context()
             context.add_cookies([{'name': settings.SESSION_COOKIE_NAME, 'value': cookie, 'url': self.live_server_url}])
             page = context.new_page()
-            for width, height, columns in ((1920, 900, 3), (1440, 900, 3), (1366, 768, 3), (1280, 720, 3),
+            for width, height, columns in ((1920, 1200, 3), (1440, 940, 3), (1920, 900, 3), (1440, 900, 3), (1366, 768, 3), (1280, 720, 3),
                                            (1024, 768, 3), (768, 1024, 2), (390, 844, 1)):
                 with self.subTest(width=width, height=height):
                     page.set_viewport_size({'width': width, 'height': height})
@@ -345,6 +345,28 @@ class BrowserUpdateTests(StaticLiveServerTestCase):
                             bottom_gap = height - box['y'] - box['height']
                             self.assertGreaterEqual(bottom_gap, 24)
                             self.assertLessEqual(bottom_gap, 80)
+                    if height >= 850 and width >= 992:
+                        for card in cards.all():
+                            position = card.evaluate('''card => {
+                                const visual = card.querySelector('.peertrain-scenario-icon').getBoundingClientRect();
+                                const copy = card.querySelector('.peertrain-scenario-copy').getBoundingClientRect();
+                                const form = card.querySelector('.peertrain-scenario-form').getBoundingClientRect();
+                                const bounds = card.getBoundingClientRect();
+                                const style = getComputedStyle(card);
+                                const padding = parseFloat(style.paddingTop);
+                                const border = parseFloat(style.borderTopWidth);
+                                const innerTop = bounds.top + padding + border;
+                                const innerHeight = bounds.height - 2 * (padding + border);
+                                const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+                                const gap = Math.min(Math.max(.75 * rem, .02 * window.innerHeight), 1.5 * rem);
+                                const oldCopyTop = innerTop + visual.height + gap +
+                                    (innerHeight - visual.height - copy.height - form.height - 2 * gap) / 2;
+                                return {iconCenter: (visual.top + visual.bottom) / 2,
+                                    desiredCenter: (innerTop + copy.top) / 2,
+                                    copyTop: copy.top, oldCopyTop};
+                            }''')
+                            self.assertAlmostEqual(position['iconCenter'], position['desiredCenter'], delta=2)
+                            self.assertAlmostEqual(position['copyTop'], position['oldCopyTop'], delta=2)
             browser.close()
 
     def test_review_cards_use_content_height_and_give_remaining_space_to_conversation(self):
