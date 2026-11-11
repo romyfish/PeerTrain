@@ -2,6 +2,7 @@
 import json
 import uuid
 import logging
+import re
 from typing import Literal
 
 from django.conf import settings
@@ -39,13 +40,12 @@ class AssessmentResult(BaseModel):
 
     @model_validator(mode='after')
     def check_feedback(self):
-        if not self.boundary_relevant or not self.opportunity_observed:
-            self.alternative_reply = None
-            self.alternative_reason = ''
-        if self.feedback_type == 'none':
-            self.feedback_text = None
-        elif not self.feedback_text or not self.feedback_text.strip():
-            raise ValueError('Learner-facing feedback must contain text.')
+        if self.alternative_reply and not (self.boundary_relevant and self.opportunity_observed):
+            raise ValueError('An alternative requires an observed boundary opportunity.')
+        if self.alternative_reply is None and self.alternative_reason:
+            raise ValueError('An alternative reason requires an alternative reply.')
+        if self.feedback_type == 'none' or not self.feedback_text or not self.feedback_text.strip():
+            raise ValueError('Every trainee reply requires learner-facing feedback text.')
         return self
 
 
@@ -95,6 +95,8 @@ def task_call(task, context, schema):
     system, instruction = task_prompt_parts(task)
     if task in {'ASSESSMENT', 'ROLEPLAY_SAFETY', 'REFLECTION_CHAT'}:
         instruction = instruction.format(**context)
+        if task == 'ASSESSMENT' and context.get('validation_feedback'):
+            instruction += '\n\nCorrect the previous structured assessment using the same conversation context: ' + context['validation_feedback']
         user = instruction
     else:
         user = instruction + '\n\n' + json.dumps(context, ensure_ascii=False)
@@ -145,6 +147,42 @@ def assessor_state(session, message):
         trainee_message__session=session, trainee_message_id__lt=message.pk)]
 
 
+def assessment_consistency_error(result, message, previous):
+    """Check structural evidence links without assigning a score in code."""
+    if result.feedback_type == 'none' or not result.feedback_text or not result.feedback_text.strip():
+        return 'Every trainee reply requires brief, supportive feedback_text.'
+    if re.match(r'boundary tips?\s*:', result.feedback_text.strip(), re.IGNORECASE):
+        return 'The UI supplies the Boundary tips label; feedback_text must begin with the feedback itself.'
+    alternative = (result.alternative_reply or '').strip()
+    if alternative and (alternative.startswith(('"', "'", '“', '‘', '«')) or
+                        re.match(r'(?:you (?:could|might) (?:ask|say)|for example)\s*:', alternative, re.IGNORECASE)):
+        return 'alternative_reply must contain only words the trainee could say, without framing or quotation marks.'
+    if result.boundary_relevant != result.opportunity_observed:
+        return 'boundary_relevant and opportunity_observed must agree for a genuine boundary choice in this reply.'
+    if result.alternative_reply and not (result.boundary_relevant and result.opportunity_observed):
+        return 'alternative_reply requires boundary_relevant and opportunity_observed.'
+    if not result.alternative_reply and result.alternative_reason:
+        return 'alternative_reason must be empty when alternative_reply is null.'
+    prior_opportunity = any(row['succeeded'] and (row['record'].get('opportunity_observed')
+                                                    or row['overall_status_level'] > 0)
+                            for row in previous)
+    if result.overall_status_level > 0 and not (result.opportunity_observed or prior_opportunity):
+        return 'Levels 1-5 require a genuine boundary opportunity in this or an earlier turn.'
+    if result.overall_status_level == 0 and result.opportunity_observed and result.observed_evidence:
+        return 'A response with observed boundary-management evidence requires a provisional level 1-5, even if the conversation is incomplete.'
+    if result.overall_status_level not in (1, 2):
+        return None
+    prior_concern = any(row['succeeded'] and row['overall_status_level'] in (1, 2)
+                        for row in previous)
+    if not ((result.boundary_relevant and result.opportunity_observed) or prior_concern):
+        return 'Levels 1-2 require an observed boundary concern in this or an earlier turn.'
+    evidence = (result.observed_evidence or '').strip()
+    note = result.assessment_note.strip()
+    if not evidence or not note:
+        return 'Levels 1-2 require observed_evidence and an assessment_note explaining the substantive concern.'
+    return None
+
+
 def assess_turn(session, message):
     token = session.processing_token
     session.refresh_from_db()
@@ -171,10 +209,26 @@ def assess_turn(session, message):
         assessment_state=json.dumps(previous, ensure_ascii=False),
     )
     try:
-        result = task_call('ASSESSMENT', context, AssessmentResult)
+        for attempt in range(2):
+            try:
+                result = task_call('ASSESSMENT', context, AssessmentResult)
+                error = assessment_consistency_error(result, message, previous)
+                log_reason = error
+            except ValueError as exc:
+                error = str(exc)
+                log_reason = type(exc).__name__
+            if not error:
+                break
+            if attempt:
+                logger.warning('Assessment result rejected for session %s, message %s: %s',
+                               session.pk, message.pk, log_reason)
+                raise ValueError(error)
+            context['validation_feedback'] = error
         record = result.model_dump()
         level, kind, text, cue = result.overall_status_level, result.feedback_type, result.feedback_text, result.roleplay_cue
     except Exception as exc:
+        logger.error('Assessment failed for session %s, message %s (%s)',
+                     session.pk, message.pk, type(exc).__name__)
         raise PracticeFailure('ASSESSMENT_FAILED') from exc
     record['turn_id'] = message.pk
     with transaction.atomic():

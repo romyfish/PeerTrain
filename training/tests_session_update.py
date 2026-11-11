@@ -83,29 +83,275 @@ class SessionUpdateTests(TestCase):
         self.assertEqual(self.session.status, 'IN_PROGRESS')
         self.assertIsNone(self.session.end_time)
 
-    def test_assessment_and_none_saved_without_visibility_context(self):
+    def test_assessment_saved_without_visibility_context(self):
         message = self.message()
-        for kind in ('affirmation', 'none'):
-            with self.subTest(kind=kind):
-                TurnAssessment.objects.all().delete()
-                with patch.object(tasks, 'task_call', return_value=self.result(kind)) as call:
-                    row = tasks.assess_turn(self.session, message)
-                    self.assertEqual(row.overall_status_level, 3)
-                    self.assertEqual(row.feedback_type, kind)
-                    self.assertEqual(row.trainee_message, message)
-                    if kind == 'none':
-                        self.assertEqual(row.feedback_text, '')
-                    tasks.assess_turn(self.session, message)
-                    self.assertEqual(call.call_count, 1)
-                    context = json.dumps(call.call_args.args[1])
-                    for forbidden in ('feedback_mode', 'sidebar', 'visibility', 'terminal', 'concurrent', 'combined'):
-                        self.assertNotIn(forbidden, context)
+        with patch.object(tasks, 'task_call', return_value=self.result()) as call:
+            row = tasks.assess_turn(self.session, message)
+            self.assertEqual(row.overall_status_level, 3)
+            self.assertEqual(row.feedback_type, 'affirmation')
+            self.assertEqual(row.trainee_message, message)
+            self.assertTrue(row.feedback_text)
+            tasks.assess_turn(self.session, message)
+            self.assertEqual(call.call_count, 1)
+            context = json.dumps(call.call_args.args[1])
+            for forbidden in ('feedback_mode', 'sidebar', 'visibility', 'terminal', 'concurrent', 'combined'):
+                self.assertNotIn(forbidden, context)
 
     def test_assessment_failure_creates_no_assessment(self):
         with patch.object(tasks, 'task_call', side_effect=ValueError('invalid')):
             with self.assertRaises(tasks.PracticeFailure):
                 tasks.assess_turn(self.session, self.message())
         self.assertFalse(TurnAssessment.objects.exists())
+
+    def test_warm_opening_keeps_unobserved_status_and_feedback(self):
+        message = self.message('Hello, it is good to meet you.')
+        result = self.result().model_copy(update={
+            'relevant_dimensions': [], 'observed_evidence': None,
+            'opportunity_observed': False, 'boundary_relevant': False,
+            'assessment_note': 'Warm opening; no meaningful boundary opportunity yet.',
+            'overall_status_level': 0, 'feedback_text': 'You offered a warm welcome.',
+        })
+        with patch.object(tasks, 'task_call', return_value=result) as call:
+            row = tasks.assess_turn(self.session, message)
+        self.assertEqual(call.call_count, 1)
+        self.assertEqual(row.overall_status_level, 0)
+        self.assertEqual(row.feedback_text, 'You offered a warm welcome.')
+        self.assertIsNone(row.record['alternative_reply'])
+        body = self.client.get(self.chat_url).content.decode()
+        self.assertIn('You offered a warm welcome.', body)
+        self.assertNotIn('peertrain-boundary-tip-label', body)
+        self.assertNotIn('peertrain-live-alternative', body)
+
+    def test_early_safety_listening_is_regular_feedback_without_future_coaching(self):
+        self.scenario.boundary_type = 'SAFETY'
+        self.scenario.save(update_fields=['boundary_type'])
+        self.message('Just one of those days where I am trying to act like I am fine and mostly getting away with it.', 'AI')
+        message = self.message("Oh what happened? I'm here to listen")
+        result = self.result().model_copy(update={
+            'relevant_dimensions': [], 'observed_evidence': None,
+            'opportunity_observed': False, 'boundary_relevant': False,
+            'assessment_note': 'Supportive invitation after vague distress; no identifiable safety concern yet.',
+            'overall_status_level': 0,
+            'feedback_text': 'You invite them to share more and offer a listening presence.',
+            'alternative_reply': None,
+        })
+        with patch.object(tasks, 'task_call', return_value=result):
+            row = tasks.assess_turn(self.session, message)
+        self.assertEqual(row.overall_status_level, 0)
+        self.assertFalse(row.record['boundary_relevant'])
+        self.assertIsNone(row.record['alternative_reply'])
+        body = self.client.get(self.chat_url).content.decode()
+        self.assertIn(result.feedback_text, body)
+        self.assertNotIn('peertrain-boundary-tip-label', body)
+        self.assertIn('do not anticipate a later disclosure', prompts.ASSESSMENT_SYSTEM)
+
+    def test_duplicate_boundary_tip_prefix_gets_one_correction(self):
+        message = self.message('It is your choice. What feels right to you?')
+        base = self.result().model_copy(update={
+            'feedback_text': 'You leave the decision with them, supporting their agency.',
+            'alternative_reply': None,
+        })
+        prefixed = base.model_copy(update={'feedback_text': 'Boundary Tip: ' + base.feedback_text})
+        with patch.object(tasks, 'task_call', side_effect=[prefixed, base]) as call:
+            row = tasks.assess_turn(self.session, message)
+        self.assertEqual(call.call_count, 2)
+        self.assertIn('UI supplies the Boundary tips label', call.call_args.args[1]['validation_feedback'])
+        body = self.client.get(self.chat_url).content.decode()
+        self.assertIn(base.feedback_text, body)
+        self.assertNotIn('Boundary Tip:', body)
+        self.assertEqual(row.feedback_text, base.feedback_text)
+
+    def test_alternative_framing_and_quotes_get_one_correction(self):
+        message = self.message('I will make that decision for you.')
+        base = self.result().model_copy(update={
+            'observed_evidence': 'I will make that decision for you',
+            'assessment_note': '"I will make that decision for you" takes over the choice.',
+            'overall_status_level': 2,
+            'feedback_text': 'You want to help; leaving the decision with them would support their agency.',
+            'alternative_reply': 'What feels right to you?',
+            'alternative_reason': 'Keeps the choice with them.',
+        })
+        framed = base.model_copy(update={'alternative_reply': 'You could ask: "What feels right to you?"'})
+        with patch.object(tasks, 'task_call', side_effect=[framed, base]) as call:
+            row = tasks.assess_turn(self.session, message)
+        self.assertEqual(call.call_count, 2)
+        self.assertIn('without framing or quotation marks', call.call_args.args[1]['validation_feedback'])
+        self.assertEqual(row.record['alternative_reply'], 'What feels right to you?')
+        body = self.client.get(self.chat_url).content.decode()
+        self.assertIn('<q><em>What feels right to you?</em></q>', body)
+
+    def test_stylistic_suggestion_does_not_lower_status_or_require_alternative(self):
+        message = self.message('That sounds hard. Tell me more if you would like.')
+        result = self.result().model_copy(update={
+            'relevant_dimensions': [], 'observed_evidence': None,
+            'opportunity_observed': False, 'boundary_relevant': False,
+            'assessment_note': 'Appropriate listening; a more open question would only be optional.',
+            'overall_status_level': 0, 'feedback_text': 'You leave room for them to share at their pace.',
+        })
+        with patch.object(tasks, 'task_call', return_value=result):
+            row = tasks.assess_turn(self.session, message)
+        self.assertEqual(row.overall_status_level, 0)
+        self.assertIsNone(row.record['alternative_reply'])
+
+    def test_appropriate_boundary_choice_has_positive_status_and_tip_without_alternative(self):
+        self.message('Can you decide what I should do?', 'AI')
+        message = self.message('It is your choice. What feels right to you?')
+        result = self.result().model_copy(update={
+            'observed_evidence': 'It is your choice',
+            'assessment_note': 'Returns the decision to the help-seeker after a direct request to decide for them.',
+            'overall_status_level': 4,
+            'feedback_text': 'You keep the decision with them, supporting their agency while staying engaged.',
+            'alternative_reply': None,
+        })
+        with patch.object(tasks, 'task_call', return_value=result) as call:
+            row = tasks.assess_turn(self.session, message)
+        self.assertEqual(call.call_count, 1)
+        self.assertEqual(row.overall_status_level, 4)
+        self.assertTrue(row.record['boundary_relevant'])
+        self.assertTrue(row.record['opportunity_observed'])
+        self.assertIsNone(row.record['alternative_reply'])
+        body = self.client.get(self.chat_url).content.decode()
+        self.assertIn('Boundary tips', body)
+        self.assertIn(result.feedback_text, body)
+        self.assertNotIn('peertrain-live-alternative', body)
+
+    def test_problematic_boundary_reply_has_grounded_low_status_and_alternative(self):
+        message = self.message('I will make that decision for you.')
+        result = self.result().model_copy(update={
+            'observed_evidence': 'I will make that decision for you',
+            'assessment_note': 'The trainee says "I will make that decision for you", taking over the help-seeker\'s choice.',
+            'overall_status_level': 2,
+            'feedback_text': 'You want to help; leaving the decision with them would support their agency.',
+            'alternative_reply': 'What options feel right to you?',
+            'alternative_reason': 'Returns the decision to the help-seeker.',
+        })
+        with patch.object(tasks, 'task_call', return_value=result) as call:
+            row = tasks.assess_turn(self.session, message)
+        self.assertEqual(call.call_count, 1)
+        self.assertEqual(row.overall_status_level, 2)
+        self.assertEqual(row.record['alternative_reply'], 'What options feel right to you?')
+        body = self.client.get(self.chat_url).content.decode()
+        self.assertIn('peertrain-boundary-tip-label', body)
+        self.assertIn(result.feedback_text, body)
+        self.assertIn('What options feel right to you?', body)
+
+    def test_earlier_concern_followed_by_repair_updates_accumulated_status(self):
+        earlier = self.message('I will make that decision for you.')
+        TurnAssessment.objects.create(trainee_message=earlier, overall_status_level=2,
+            feedback_type='reflective_prompt', feedback_text='Leave the choice with them.',
+            record={'observed_evidence': 'I will make that decision for you',
+                    'boundary_relevant': True, 'opportunity_observed': True})
+        message = self.message('Sorry, that is your decision. What would you prefer?')
+        result = self.result().model_copy(update={
+            'observed_evidence': 'that is your decision',
+            'assessment_note': 'Earlier takeover was repaired by returning the choice.',
+            'overall_status_level': 3,
+            'feedback_text': 'You returned the choice to them and invited their preference.',
+            'alternative_reply': None,
+        })
+        with patch.object(tasks, 'task_call', return_value=result) as call:
+            row = tasks.assess_turn(self.session, message)
+        self.assertEqual(json.loads(call.call_args.args[1]['assessment_state'])[0]['overall_status_level'], 2)
+        self.assertEqual(row.overall_status_level, 3)
+        self.assertIsNone(row.record['alternative_reply'])
+
+    def test_inconsistent_low_status_retries_once_with_same_context(self):
+        message = self.message('Hello, it is good to meet you.')
+        base = self.result().model_copy(update={
+            'relevant_dimensions': [], 'observed_evidence': None,
+            'opportunity_observed': False, 'boundary_relevant': False,
+            'feedback_text': 'You offered a warm welcome.',
+        })
+        inconsistent = base.model_copy(update={'overall_status_level': 1,
+            'assessment_note': 'Warm greeting.'})
+        corrected = base.model_copy(update={'overall_status_level': 0,
+            'assessment_note': 'Warm greeting; no boundary opportunity.'})
+        with patch.object(tasks, 'task_call', side_effect=[inconsistent, corrected]) as call:
+            row = tasks.assess_turn(self.session, message)
+        self.assertEqual(row.overall_status_level, 0)
+        self.assertEqual(call.call_count, 2)
+        first, second = (item.args[1] for item in call.call_args_list)
+        self.assertEqual(first['transcript'], second['transcript'])
+        self.assertEqual(first['assessment_state'], second['assessment_state'])
+        self.assertIn('require a genuine boundary opportunity', second['validation_feedback'])
+
+    def test_observed_boundary_choice_with_level_zero_retries_once(self):
+        message = self.message('It is your choice. What feels right to you?')
+        base = self.result().model_copy(update={
+            'observed_evidence': 'It is your choice',
+            'assessment_note': 'Supports the help-seeker\'s agency.',
+            'feedback_text': 'You leave the choice with them, supporting their agency.',
+            'alternative_reply': None,
+        })
+        inconsistent = base.model_copy(update={'overall_status_level': 0})
+        with patch.object(tasks, 'task_call', side_effect=[inconsistent, base]) as call:
+            row = tasks.assess_turn(self.session, message)
+        self.assertEqual(row.overall_status_level, 3)
+        self.assertEqual(call.call_count, 2)
+        self.assertIn('provisional level 1-5', call.call_args.args[1]['validation_feedback'])
+
+    def test_persistent_inconsistency_fails_without_saving(self):
+        message = self.message('Hello, it is good to meet you.')
+        inconsistent = self.result().model_copy(update={
+            'overall_status_level': 1, 'observed_evidence': None,
+            'opportunity_observed': False, 'boundary_relevant': False,
+        })
+        with patch.object(tasks, 'task_call', return_value=inconsistent) as call:
+            with self.assertRaises(tasks.PracticeFailure):
+                tasks.assess_turn(self.session, message)
+        self.assertEqual(call.call_count, 2)
+        self.assertFalse(TurnAssessment.objects.exists())
+
+    def test_alternative_without_boundary_opportunity_is_retried(self):
+        message = self.message('Hello, it is good to meet you.')
+        base = self.result().model_copy(update={
+            'opportunity_observed': False, 'boundary_relevant': False,
+            'overall_status_level': 0, 'feedback_text': 'You offered a warm welcome.',
+        })
+        inconsistent = base.model_copy(update={
+            'alternative_reply': 'What brings you here?',
+            'alternative_reason': 'Another way to invite sharing.',
+        })
+        with patch.object(tasks, 'task_call', side_effect=[inconsistent, base]) as call:
+            row = tasks.assess_turn(self.session, message)
+        self.assertEqual(call.call_count, 2)
+        self.assertIn('alternative_reply requires', call.call_args.args[1]['validation_feedback'])
+        self.assertIsNone(row.record['alternative_reply'])
+        self.assertEqual(row.record['alternative_reason'], '')
+
+    def test_specific_paraphrase_supports_low_status_without_retry(self):
+        self.scenario.boundary_type = 'SAFETY'
+        self.scenario.save(update_fields=['boundary_type'])
+        self.message('I think everyone would be better off if I was less in the way.', 'AI')
+        message = self.message("don't think like that. you'd be fine")
+        result = self.result().model_copy(update={
+            'relevant_dimensions': ['safety'],
+            'observed_evidence': 'Tells the help-seeker not to think that and reassures them they will be fine.',
+            'assessment_note': 'The trainee dismisses a possible safety concern with reassurance instead of exploring what the help-seeker means.',
+            'overall_status_level': 2,
+            'feedback_type': 'reflective_prompt',
+            'feedback_text': 'You want to reassure them; exploring what they mean would help you respond to their distress.',
+            'alternative_reply': 'That sounds painful. Can you tell me more about what you mean?',
+            'alternative_reason': 'Stays with the disclosure and invites clarification.',
+        })
+        with patch.object(tasks, 'task_call', return_value=result) as call:
+            row = tasks.assess_turn(self.session, message)
+        self.assertEqual(row.overall_status_level, 2)
+        self.assertEqual(call.call_count, 1)
+
+    def test_low_status_without_evidence_gets_one_correction(self):
+        message = self.message('I will make that decision for you.')
+        base = self.result().model_copy(update={
+            'overall_status_level': 2,
+            'observed_evidence': 'Takes over the decision from the help-seeker.',
+            'assessment_note': 'The trainee takes over the help-seeker\'s choice.',
+        })
+        inconsistent = base.model_copy(update={'observed_evidence': None})
+        with patch.object(tasks, 'task_call', side_effect=[inconsistent, base]) as call:
+            row = tasks.assess_turn(self.session, message)
+        self.assertEqual(row.overall_status_level, 2)
+        self.assertEqual(call.call_count, 2)
+        self.assertIn('require observed_evidence', call.call_args.args[1]['validation_feedback'])
 
     def test_assessment_context_uses_only_public_service_mode_and_dialogue(self):
         first = self.message('Hello, I have been feeling lonely.', 'AI')
@@ -191,6 +437,8 @@ class SessionUpdateTests(TestCase):
                 tasks.AssessmentResult.model_validate({**data, 'overall_status_level': level})
         with self.assertRaises(ValueError):
             tasks.AssessmentResult.model_validate({**data, 'feedback_text': ''})
+        with self.assertRaises(ValueError):
+            tasks.AssessmentResult.model_validate({**data, 'feedback_type': 'none', 'feedback_text': None})
 
     def test_safety_allows_realistic_distress(self):
         with patch.object(tasks, 'task_call', return_value=self.verdict()) as call:
@@ -559,12 +807,14 @@ class SessionUpdateTests(TestCase):
 
     def test_non_boundary_feedback_cannot_include_an_alternative(self):
         data = self.result().model_dump()
-        result = tasks.AssessmentResult.model_validate({**data, 'boundary_relevant': False,
-            'alternative_reply': 'An unnecessary rewrite', 'alternative_reason': 'Not applicable'})
-        self.assertIsNone(result.alternative_reply)
-        self.assertEqual(result.alternative_reason, '')
-        self.assertIn('brief but kind greeting', prompts.ASSESSMENT_TURN)
-        self.assertIn('You could also consider asking', prompts.ASSESSMENT_SYSTEM)
+        with self.assertRaises(ValueError):
+            tasks.AssessmentResult.model_validate({**data, 'boundary_relevant': False,
+                'alternative_reply': 'An unnecessary rewrite', 'alternative_reason': 'Not applicable'})
+        with self.assertRaises(ValueError):
+            tasks.AssessmentResult.model_validate({**data, 'alternative_reply': None,
+                'alternative_reason': 'Not applicable'})
+        self.assertIn('ordinary greetings', prompts.ASSESSMENT_SYSTEM)
+        self.assertIn('feedback_text addressed', prompts.ASSESSMENT_SYSTEM)
 
     def test_live_feedback_history_and_saved_alternative(self):
         first = self.message('Hello, welcome back.')
@@ -625,11 +875,10 @@ class SessionUpdateTests(TestCase):
             self.assertIn('opening message', text)
         self.assertNotIn('Make Bailey', persona_prompt_for('AGENCY', 'pso'))
         self.assertIn('40-80 words', prompts.REFLECTION_AI_SYSTEM)
-        self.assertIn('only the suggested additional sentence or question', prompts.ASSESSMENT_SYSTEM)
-        self.assertIn('do not restate or paraphrase', prompts.ASSESSMENT_TURN)
+        self.assertIn('only that sentence or question', prompts.ASSESSMENT_SYSTEM)
+        self.assertIn('Do not flag ordinary listening', prompts.ASSESSMENT_TURN)
         self.assertIn('normally one short sentence', prompts.ASSESSMENT_SYSTEM)
-        self.assertIn('Keep that reasoning only in assessment_note', prompts.ASSESSMENT_SYSTEM)
-        self.assertIn('Never add commentary about the presence or absence of boundary work', prompts.ASSESSMENT_TURN)
+        self.assertIn('Explain the evidence and status in assessment_note', prompts.ASSESSMENT_TURN)
 
     def test_openai_task_adapter_uses_structured_schema_and_explicit_context(self):
         feedback = self.complete()
