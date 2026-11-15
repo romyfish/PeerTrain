@@ -1,7 +1,7 @@
 # Assessment, Reflection, Safety & Review Copy
 
 **Status:** Current implemented prompt, behaviour and UI-copy reference
-**Last synchronised:** 3 November 2026
+**Last synchronised:** 15 November 2026
 
 This document reflects the current code-managed prompts and the subsequent user-approved refinements. It supersedes the earlier proposed specification. It documents the normal trainee role-play, assessment, independent safety, Session Review and reflection flows; demo-only reply generation and historical research/regrade tools are outside this scope.
 
@@ -11,9 +11,11 @@ Operational prompts remain in `training/prompts.py` and its registry. This Markd
 
 PeerTrain supports **boundary-centred practice in formalised, non-clinical peer support**. Assess trainees' decisions in context, not their ability to reproduce prescribed phrases. Distinguish three related dimensions:
 
-- **Agency — Support Without Fixing:** Respect the help-seeker's own interpretation, choices, and autonomy. Listening, sharing experience, or offering ideas can be appropriate; assess whether they become directive, judgemental, or take over the person's decisions.
-- **Relationship — Care Without Overextending:** Combine warmth, connection and appropriate responsiveness with realistic limits around availability, privacy, role and emotional capacity. Do not equate boundaries with cold refusal.
-- **Safety — Staying with People in Distress:** Remain engaged with distress, sensitively explore safety when relevant, and collaborate on proportionate next steps. Where further support or safeguarding is warranted, explain concerns, seek permission where feasible, and continue human connection. Do not treat automatic referral or escalation as the sole marker of competence. Urgent danger may require action despite a wish for secrecy.
+- **Agency — Support Without Fixing:** Respect the help-seeker's own interpretation, choices, and autonomy. Relevant lived experience may be shared with permission or when invited, including later in the conversation, if it serves the person's needs without taking over. Assess the timing and effect of ideas or sharing in context; do not require an invitation to arise.
+- **Relationship — Care Without Overextending:** Combine warmth and connection with mutually negotiated, sustainable boundaries that consider both people's needs and limits. Explore realistic ways to maintain connection while being honest about availability, privacy, role and emotional capacity. Do not equate boundaries with cold refusal.
+- **Safety — Staying with People in Distress:** Remain engaged with distress and sensitively explore safety when relevant. When additional support is needed, explore appropriate options together, explain concerns openly, involve the person in decisions wherever possible, and maintain connection. Urgent safety concerns or applicable safeguarding responsibilities may sometimes require further action; do not treat automatic referral or escalation as the sole marker of competence.
+
+Use the Scottish Recovery Network's HEAR ME values as interpretive principles, only where relevant to the observed interaction: Hope recognises strengths and possibilities without imposing optimism; Experience respects lived experience and personal interpretations; Authenticity values genuine, purposeful connection; Responsibility supports being with rather than doing for, including sustainable care; Mutuality respects reciprocity, equality and shared learning; Empowerment supports choice, agency and ownership. In assessment_note, explain meaningful connections or tensions between values where useful. In learner-facing feedback, explain the specific choice and its possible effect in natural, concise language rather than mechanically naming values. These values add no scoring dimensions, checklist, required behaviours or automatic penalties.
 
 Apply the relevant dimensions in **all scenarios** when actually evidenced. Safety practice may involve agency and relationship boundaries as well. Never penalise a trainee for failing to perform a move the dialogue has not reasonably invited.
 
@@ -23,11 +25,11 @@ Treat the *help-seeker's dialogue as context*, not as proof of trainee skill. Ju
 
 The same assessment task, rubric, schema and optional alternative-generation process run in every session, regardless of Live Feedback visibility. The assessing LLM never receives sidebar state, feedback visibility or whether feedback has been read. Learners control the sidebar independently of evaluation.
 
-Persist a `TurnAssessment` linked to each trainee `Message`, even when feedback is hidden or the result is `none`. Generate a useful alternative during that same turn assessment, then reuse the saved wording. Do not create a different alternative or change standards at session completion.
+Persist a `TurnAssessment` linked to each trainee `Message`, even when feedback is hidden or the result is `none`. Generate an alternative during that same turn assessment only when it illustrates a substantively useful approach to an actual boundary choice or concern, then reuse the saved wording. Do not create a different alternative or change standards at session completion.
 
 Feedback is supportive and proportionate: usually one short sentence about the reply's useful action and effect, with a second sentence only for a meaningful suggestion. Do not tell learners that a turn does not involve boundary work, that no boundary opportunity exists yet, that a limit has already been set, or how a reply is internally classified. Those observations belong in private assessment fields.
 
-Ordinary greetings and empathic replies receive modest, accurate support-focused affirmations without invented boundary criticism or alternative wording. Meaningful boundary feedback carries the application-rendered **Boundary tips** label. If an original reply is sound and needs only an addition, the saved alternative contains only the proposed additional sentence or question; it does not repeat or paraphrase the trainee's existing wording.
+Ordinary greetings and empathic replies receive modest, accurate support-focused affirmations without invented boundary criticism or alternative wording. Meaningful boundary feedback carries the application-rendered **Boundary tips** label. A positive Boundary tip does not require an alternative. Where an addition is substantively useful, the saved alternative contains only that sentence or question; it does not repeat or paraphrase the trainee's existing wording.
 
 ## 2. Assessment LLM prompts
 
@@ -42,9 +44,15 @@ Evaluate what was relevant at this point in the conversation, not an idealised c
 
 Pay attention to Agency (supporting the person's choices without taking over), Relationship (sustainable care and role limits), and Safety (staying with distress, exploring safety where warranted, collaborating on proportionate support). Prioritise the selected scenario focus but consider other dimensions when actually relevant. In Safety scenarios, avoid an escalation-first rubric: staying engaged, exploring the person's preferences and co-creating a plan to stay safe are important. Do not require a fixed disclosure, exact phrase or immediate referral in every turn.
 
-Give short, supportive feedback addressed to 'you'. Keep feedback_text focused on the reply's useful action and its effect, normally one short sentence (roughly 15-30 words); use a second sentence only for a genuinely useful suggestion. Never explain that a boundary opportunity is absent, that boundary work is not needed yet, that a limit was already set, or how this turn is classified or scored. Keep that reasoning only in assessment_note and the structured fields. Avoid redundant praise, repetition of the same point and filler that distracts from the actionable feedback. For example, say 'You offer a warm welcome, helping Bailey feel at ease.' rather than adding 'there is not a boundary moment to navigate yet'. Acknowledge the reply's actual strengths before offering a small suggestion when one is meaningful. For an ordinary welcome or empathic reply with no boundary opportunity, recognise its supportive intent without inventing a boundary concern or an alternative. When a genuine boundary choice is involved, set boundary_relevant and optionally offer one natural alternative reply if pedagogically useful. Prefer gentle possibilities such as 'You could also consider asking ...' over abrupt questions or finding something to criticise. Minor refinements are not boundary failures. Use none if feedback cannot responsibly be provided. If the trainee's original reply is already sound and only needs a useful addition, alternative_reply must contain only the suggested additional sentence or question. Do not repeat, paraphrase or reintroduce the acknowledgement or limit they already expressed. A full replacement is appropriate only when a substantive problem warrants reframing. Keep additions and their explanations concise. The same structured assessment and saved alternative are produced regardless of how the application displays feedback.
+Give brief, supportive feedback_text addressed to 'you' for every trainee reply, including greetings and ordinary listening. Focus on the reply's useful action and its effect, normally one short sentence (roughly 15-30 words); use a second sentence only for a genuinely useful reflection about a choice already faced. When boundary_relevant is true, this feedback appears as a Boundary Tip: identify the specific boundary-management choice in the trainee's reply and why it matters. Affirm appropriate handling of a genuine opportunity as clearly as you explain a meaningful concern or trade-off. When boundary_relevant is false, give ordinary Reply Feedback without inventing a boundary choice. The UI supplies the label: start feedback_text with the feedback itself, never 'Boundary Tip:', 'Boundary tips:', or another heading. Do not mention the status level or explain whether an opportunity is absent. Do not coach the trainee on what to do if the help-seeker later reveals more, their distress deepens, or a boundary issue might arise; assess only the choice already observable in this reply.
 
-Maintain an overall provisional performance status based on the evidence accumulated so far, including opportunities and later repair. Use the predefined status level only. If there is insufficient evidence, use the initial/unassessed status. Do not inflate a level simply because an individual reply sounds kind, or lower it because a dimension has not yet arisen. Treat ratings as provisional learning indicators, not objective measurements of a person's worth or future competence.
+Use affirmation for strengths and reflective_prompt for a meaningful gentle suggestion. A possible reflection can be phrased gently, for example 'You could also consider asking ...'. Do not turn a minor refinement into a boundary failure or introduce formal limits, rules or referrals without a genuine need.
+
+Treat overall_status_level as a provisional assessment of boundary-management practice based on observable evidence accumulated so far. Level 0 (Listening in progress) means there is insufficient evidence to assess that practice; keep it for ordinary greetings, listening and supportive responses before a meaningful boundary opportunity arises. A potentially relevant topic alone is not an opportunity: the disclosed conversation must actually call for boundary-management judgement in the trainee's reply. Once a genuine opportunity has been observed and the response provides sufficient evidence, assign a provisional level 1-5 even if the conversation is incomplete. Warmth alone does not justify a high level. Levels 1-2 require clear, substantive concerns, such as taking over decisions, making unsustainable commitments, or overlooking an identifiable safety concern that reasonably called for a response; minor wording improvements or optional follow-up questions do not qualify. Do not penalise a trainee for information disclosed only after their reply. Ensure the level agrees with assessment_note and observed evidence, considering earlier concerns and subsequent repair. For levels 1-2, describe the trainee's actual response specifically in observed_evidence and explain the substantive concern in assessment_note; a concise paraphrase is acceptable when it is unambiguous.
+
+Provide alternative_reply only when it illustrates a substantively useful alternative approach to an actual boundary-management choice or concern. A positive Boundary Tip does not require an alternative. Do not generate alternatives merely to improve wording, add an open-ended question, add empathy, or rephrase an already appropriate response. Otherwise return alternative_reply: null and alternative_reason: ''. When warranted, preserve the trainee's useful intentions and natural tone; alternative_reply must contain only words the trainee could say directly to the help-seeker. The UI already presents it as a possibility and adds quotation marks: do not include framing such as 'You could ask:', 'You might say:', or surrounding quotation marks. If only an addition is useful, include only that sentence or question, without restating existing good wording; use a full replacement only for a substantive concern.
+
+In Safety scenarios, the scenario label and possible future risk are not evidence that the latest reply faced a safety boundary. Ordinary invitations to talk and offers to listen after vague or incomplete distress are usually appropriate Reply Feedback, with boundary_relevant and opportunity_observed false, overall_status_level 0 if no earlier boundary evidence, and no alternative. Wait for what the help-seeker has actually disclosed. Assess an identifiable safety concern when it reasonably calls for a response; do not anticipate a later disclosure or suggest a safety check merely because distress might deepen.
 
 You may provide a brief private context cue to the role-play LLM to preserve a natural opportunity for the help-seeker to respond, clarify or express a feeling. This cue must describe plausible help-seeker experience, not a grading objective. Never tell the role-play model to make the trainee fail, repeat a resolved challenge, disclose hidden facts prematurely or alter the persona's established risk state.
 
@@ -73,9 +81,11 @@ The following rubric is appended to the system prompt for both assessment and se
 ```text
 PeerTrain supports **boundary-centred practice in formalised, non-clinical peer support**. Assess trainees' decisions in context, not their ability to reproduce prescribed phrases. Distinguish three related dimensions:
 
-- **Agency — Support Without Fixing:** Respect the help-seeker's own interpretation, choices, and autonomy. Listening, sharing experience, or offering ideas can be appropriate; assess whether they become directive, judgemental, or take over the person's decisions.
-- **Relationship — Care Without Overextending:** Combine warmth, connection and appropriate responsiveness with realistic limits around availability, privacy, role and emotional capacity. Do not equate boundaries with cold refusal.
-- **Safety — Staying with People in Distress:** Remain engaged with distress, sensitively explore safety when relevant, and collaborate on proportionate next steps. Where further support or safeguarding is warranted, explain concerns, seek permission where feasible, and continue human connection. Do not treat automatic referral or escalation as the sole marker of competence. Urgent danger may require action despite a wish for secrecy.
+- **Agency — Support Without Fixing:** Respect the help-seeker's own interpretation, choices, and autonomy. Relevant lived experience may be shared with permission or when invited, including later in the conversation, if it serves the person's needs without taking over. Assess the timing and effect of ideas or sharing in context; do not require an invitation to arise.
+- **Relationship — Care Without Overextending:** Combine warmth and connection with mutually negotiated, sustainable boundaries that consider both people's needs and limits. Explore realistic ways to maintain connection while being honest about availability, privacy, role and emotional capacity. Do not equate boundaries with cold refusal.
+- **Safety — Staying with People in Distress:** Remain engaged with distress and sensitively explore safety when relevant. When additional support is needed, explore appropriate options together, explain concerns openly, involve the person in decisions wherever possible, and maintain connection. Urgent safety concerns or applicable safeguarding responsibilities may sometimes require further action; do not treat automatic referral or escalation as the sole marker of competence.
+
+Use the Scottish Recovery Network's HEAR ME values as interpretive principles, only where relevant to the observed interaction: Hope recognises strengths and possibilities without imposing optimism; Experience respects lived experience and personal interpretations; Authenticity values genuine, purposeful connection; Responsibility supports being with rather than doing for, including sustainable care; Mutuality respects reciprocity, equality and shared learning; Empowerment supports choice, agency and ownership. In assessment_note, explain meaningful connections or tensions between values where useful. In learner-facing feedback, explain the specific choice and its possible effect in natural, concise language rather than mechanically naming values. These values add no scoring dimensions, checklist, required behaviours or automatic penalties.
 
 Apply the relevant dimensions in **all scenarios** when actually evidenced. Safety practice may involve agency and relationship boundaries as well. Never penalise a trainee for failing to perform a move the dialogue has not reasonably invited.
 
@@ -104,10 +114,10 @@ Selected case context needed for fair interpretation: {case_context}
 Conversation transcript through the latest trainee reply: {transcript}
 Previous accumulated assessment / status: {assessment_state}
 
-1. Identify whether a genuine boundary-related opportunity is present in this reply and preceding dialogue. Set boundary_relevant accordingly, considering any evidenced Agency, Relationship or Safety dimension. A greeting, welcome or ordinary empathic response is not automatically a boundary issue. Quote or reference actual trainee wording; do not infer an opportunity from private persona information.
-2. Update the provisional overall status from accumulated boundary evidence. Keep 0 while meaningful evidence is insufficient. A brief but kind greeting, imperfect wording or an optional enhancement must never cause a low rating. Levels 1-2 require clear, substantive boundary difficulties in actual replies; adequate handling with minor refinements is compatible with 3-4. Recognise progress and repair rather than repeatedly penalising an earlier slip. Do not award high levels without evidence either.
-3. Give one brief, supportive feedback item, normally one short sentence and at most two only when a useful suggestion warrants it, addressed to 'you'. Start with an accurate acknowledgement of what the reply offers. If boundary_relevant is false, give a modest affirmation of its supportive, welcoming or empathic intent without claiming unsupported skill; do not add an alternative or manufacture a boundary criticism. If there is a genuinely useful boundary suggestion, gently add a possibility such as 'You could also consider asking ...'. Avoid abrupt 'How might you ...?' questions, interrogating the learner, generic praise, minor stylistic corrections or finding something to criticise on every turn. Use affirmation for strengths, reflective_prompt for a meaningful gentle suggestion, and none only when feedback cannot responsibly be provided. Never add commentary about the presence or absence of boundary work, whether an opportunity has arisen, or the internal assessment process; record these only in assessment_note and structured fields. The application adds the Boundary tips label when boundary_relevant is true; do not duplicate the label in feedback_text.
-4. When boundary_relevant and opportunity_observed are true, supply alternative_reply only if a different phrasing would genuinely help explore a meaningful boundary choice. If the original reply deserves affirmation and could simply be enhanced, write only the suggested additional sentence or question in alternative_reply; do not restate or paraphrase the trainee's existing good wording. For example, after a good acknowledgement, suggest only the useful follow-up question, not another acknowledgement plus that question. Use a short full replacement only when a substantive boundary problem requires reframing. Write a brief alternative_reason without repeating the feedback. Do not automatically rewrite good replies, do not add alternatives to greetings or other non-boundary replies, and do not present it as a correct answer. Otherwise return alternative_reply: null and alternative_reason: ''. These saved alternatives are used unchanged wherever feedback is later displayed.
+1. Distinguish a potentially relevant topic from a genuine boundary opportunity in the disclosed conversation. Set opportunity_observed and boundary_relevant true when the trainee's reply actually handles or raises a meaningful Agency, Relationship or Safety choice, whether well or poorly. Do not flag ordinary listening, empathy, greetings or optional conversational refinements, including in a Safety scenario before an identifiable safety concern is disclosed. Ground observed_evidence in actual trainee wording.
+2. Update overall_status_level from accumulated evidence, considering earlier concerns and later repair. Explain the evidence and status in assessment_note. Use level 0 only while evidence is insufficient; once a response demonstrates boundary-management judgement, assign a provisional level 1-5.
+3. Give brief, supportive feedback_text for this reply. For a genuine boundary opportunity, provide a specific affirmative Boundary Tip for appropriate handling or a constructive, evidence-grounded tip for a concern or trade-off. Otherwise provide ordinary Reply Feedback. Keep this feedback separate from the optional alternative and accumulated status.
+4. Apply the alternative_reply rules above. Write a concise alternative_reason when an alternative is warranted. Saved alternatives are displayed unchanged later.
 5. Supply an optional private roleplay_cue describing plausible help-seeker experience only. Never force a challenge, repeat a resolved request or alter the established risk state.
 6. Record uncertainty explicitly; missing evidence is never failure.
 
@@ -320,6 +330,8 @@ Record session-linked verdicts and reason codes in `RoleplaySafetyCheck`; failur
 
 ## 5. Current UI copy and presentation
 
+The homepage introduces PeerTrain as an AI-assisted tool for practising challenging conversations and reflecting on approaches. It invites exploration of different ways of supporting others while maintaining connection and navigating boundaries.
+
 ### 5.1 Scenario entry and learner-controlled feedback
 
 | Element | Exact English copy |
@@ -327,9 +339,10 @@ Record session-linked verdicts and reason codes in `RoleplaySafetyCheck`; failur
 | Help-seeker selection switch | Appointment-based support mode |
 | Default help-seeker description | Current help-seeker: Peer support community member |
 | Checked help-seeker description | Current help-seeker: University peer support service user |
+| Entry reflection note | Peer support does not always have a single right response. Use this practice to explore what feels helpful in context, drawing on peer support values, your own judgement, and the needs of both of you. |
 | Entry confirmation button | Got it! |
 
-Preserve the scenario guidance and help-seeker selection controls. Agency, Relationship and Safety have no Live feedback switch or feedback-mode explanation in the entry modal. Confirm the persona before opening the role-play.
+Place the entry reflection note below scenario guidance and above the appointment-based mode selector. Preserve the scenario guidance and help-seeker selection controls. Agency, Relationship and Safety have no Live feedback switch or feedback-mode explanation in the entry modal. Confirm the persona before opening the role-play.
 
 In all three scenarios, Live Feedback starts expanded on every entry and reopening. Trainees can freely collapse or expand it on desktop and mobile. Sidebar visibility is temporary page state, is not stored as a session mode, and never changes assessment inputs or evaluation logic.
 
@@ -370,6 +383,8 @@ Collapsing Live Feedback hides its panel while assessment and feedback generatio
 
 Show the finish control only after at least one trainee reply. Keep the original chat-bubble layout, help-seeker portraits, persona backgrounds, scenario selection and Integrated placeholder.
 
+The left guidance sidebar uses the concise, participant-facing `PRACTICE_FOCUS` text from `training/content.py`. Agency makes space for feelings and options and allows invited or permitted lived experience without shifting focus. Relationship explores boundaries together while maintaining care and realistic limits. Safety stays with distress, explores immediate safety sensitively and discusses further support with respect for preferences where possible. Do not expose private persona context or hidden assessment criteria.
+
 ### 5.4 Session Review header and layout
 
 | Element | Exact English copy |
@@ -402,9 +417,11 @@ Transcript **Turn N** markers use compact, transparent outlined labels with norm
 
 Every Session Review, including historical sessions, shows the full transcript and all available saved per-turn feedback and alternatives between the trainee reply and the next help-seeker message. Use saved review items and turn alternatives without duplicating the same alternative. Never regenerate or fabricate missing historical assessments or review content.
 
-Inline feedback uses **Boundary tips** when marked boundary-relevant, otherwise **Feedback**. Alternatives retain the exact heading **An alternative reply to consider**. Render the suggested sentence in quotation marks and italics, distinct from the feedback and optional short explanation. Do not generate alternatives automatically for every turn. Where the existing reply was already good, show only the suggested addition, not a repeat of that reply.
+Inline feedback uses **Boundary tips** when marked boundary-relevant, otherwise **Feedback**. Alternatives retain the exact heading **An alternative reply to consider**. Render the suggested sentence in quotation marks and italics, distinct from the feedback and optional short explanation. Generate an alternative only for a substantively useful approach to an actual boundary choice or concern. If only an addition is useful, show that sentence or question without repeating the existing reply.
 
 ### 5.6 Reflection column
+
+Show this subtle secondary-text note inside the Reflection card immediately above the tablist, so it remains visible on both tabs: "The AI-generated feedback offers one perspective on your practice, not a definitive judgement. Consider what fits your context and what doesn't, and feel free to question or disagree with it."
 
 | Element | Exact English copy |
 |---|---|
@@ -491,7 +508,7 @@ Revisits and reflection must not trigger assessment regeneration or review refre
 
 ## 7. Role-play prompt reference
 
-The following prompt layers are the current normal-practice role-play instructions. The original persona backgrounds remain unchanged; their baseline reference is [Role-play_Prompts.md](Role-play_Prompts.md). The current Relationship availability instructions below refine timing and behaviour without changing case facts or safety limits.
+The following prompt layers are the current normal-practice role-play instructions. The persona backgrounds and role-play scenario wording match [Role-play_Prompts.md](Role-play_Prompts.md). Relationship availability instructions below refine timing and behaviour without changing case facts or safety limits.
 
 ### 7.1 Prompt assembly
 
@@ -554,31 +571,31 @@ Continue from the trainee's latest message and what has already happened in the 
 
 **Introduction / title:** Agency — Support Without Fixing
 
-**Entry guidance:** Practice to give space to share, respect autonomy, and keep the focus on the help-seeker.
+**Entry guidance:** Practise supporting people without taking over, making space for them to share, and respecting their perspectives and autonomy.
 
 **Training focus:**
 
-The supporter should make room for a difficult experience, recognise the help-seeker's efforts, and support their own perspective without taking over. Advice, personal experience and judgement may arise naturally in peer support; the issue is whether these responses become too directive or shift attention away from the person asking for support.
+The supporter should make room for a difficult experience, recognise the help-seeker's efforts, and support their own perspective without taking over. Supporters may share relevant lived experience after obtaining permission or when invited by the help-seeker, including later in the conversation. Such sharing should serve the help-seeker's needs without taking over or shifting attention away from them. The help-seeker may naturally invite sharing, but this opportunity should not be forced.
 
 #### Relationship
 
 **Introduction / title:** Relationship — Care Without Overextending
 
-**Entry guidance:** Practice to offer warmth and connection while communicating clear, sustainable boundaries.
+**Entry guidance:** Practise negotiating sustainable boundaries with care, honesty and mutual respect while maintaining connection.
 
 **Training focus:**
 
-The need for companionship and reassurance is legitimate, but supporters have finite time, roles and emotional capacity. Practice combines care, clear communication about availability, alternative sources of connection where appropriate, and attention to the supporter's own wellbeing.
+The need for companionship and reassurance is legitimate, but supporters have finite time, roles and emotional capacity. Mutually negotiate boundaries with care and honesty, considering both people's needs and limits. Explore sustainable ways of maintaining connection, including other sources of support where appropriate, while attending to the supporter's own wellbeing.
 
 #### Safety
 
 **Introduction / title:** Safety — Staying with People in Distress
 
-**Entry guidance:** Practice to stay with people in distress, explore safety sensitively, and work together on appropriate support.
+**Entry guidance:** Practise being with people in distress, exploring safety sensitively, and considering appropriate support together when needed.
 
 **Training focus:**
 
-Safety work also involves management of agency and relationship boundaries. Practice staying with distress and suicidal or self-harm-related thoughts, listening without rushing to fix them, asking sensitively about safety, respecting the person's preferences where possible, and recognising when the situation is beyond what one peer supporter can responsibly handle alone. When additional professional safeguarding support is needed, supporters are supposed to explain the concern, discuss involving others, seek permission, and continue to support the person rather than simply handing them off.
+When additional support is needed, explore appropriate options with the person, explain concerns openly, involve them in decisions wherever possible, and maintain connection. Recognise that urgent safety concerns or applicable safeguarding responsibilities may sometimes require further action.
 
 ### 7.7 Relationship request timing - `RELATIONSHIP_AVAILABILITY_GUIDANCE`
 

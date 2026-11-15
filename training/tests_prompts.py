@@ -106,6 +106,17 @@ class CodePromptTests(TrainingFlowBase):
                     self.assertIn(persona[key], reference)
         self.assertEqual(names, ["Andy", "Alex", "Bailey", "Billy", "Casey", "Carly"])
 
+    def test_assessment_reference_matches_shared_runtime_prompts(self):
+        reference = (Path(settings.BASE_DIR) / "System_Prompts_Texts_Specification.md").read_text(encoding="utf-8")
+        for name in ("ASSESSMENT_SYSTEM", "ASSESSMENT_RUBRIC", "ASSESSMENT_TURN", "ASSESSMENT_SESSION_REVIEW"):
+            with self.subTest(prompt=name):
+                self.assertIn(getattr(prompts, name), reference)
+        for scenario in prompts.ROLEPLAY_SCENARIOS.values():
+            self.assertIn(scenario["guidance"], reference)
+            self.assertIn(scenario["training_focus"], reference)
+        self.assertIn("HEAR ME values as interpretive principles", prompts.ASSESSMENT_RUBRIC)
+        self.assertIn("These values add no scoring dimensions", prompts.ASSESSMENT_RUBRIC)
+
     def test_prompts_need_no_database_and_no_prompt_table_exists(self):
         self.assertNotIn("training_prompt", connection.introspection.table_names())
         with self.assertNumQueries(0):
@@ -167,6 +178,7 @@ class CodePromptTests(TrainingFlowBase):
                     response = self.client.get(url)
                     self.assertContains(response, 'id="persona-selection"')
                     self.assertContains(response, "Appointment-based support mode")
+                    self.assertContains(response, "Peer support does not always have a single right response.")
                     self.assertNotContains(response, character["private_context"])
                     self.assertNotContains(response, character["safety_limits"])
                     self.assertFalse(session.messages.exists())

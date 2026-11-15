@@ -58,6 +58,7 @@ class AssessmentPresentationTests(SimpleTestCase):
                 self.assertNotIn(f"Score {score}/5", review)
                 self.assertIn("My notes", review)
                 self.assertIn("Reflection", review)
+                self.assertLess(review.index("The AI-generated feedback offers one perspective"), review.index('class="review-tabs"'))
 
     def test_live_feedback_shows_only_concise_saved_item(self):
         live = render_to_string(

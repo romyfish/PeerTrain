@@ -184,16 +184,17 @@ def scenario_meta_for_boundary(boundary_type):
 # Keep future role-play developments and private case information out of the UI.
 PRACTICE_FOCUS = {
     "AGENCY": (
-        "Listen and help the person explore their feelings and options. Support their own "
-        "decisions without taking over or shifting the focus to yourself."
+        "Make room for the person's feelings and help them explore their options. When helpful, "
+        "you can share relevant lived experience with permission or when invited, without shifting "
+        "the focus to yourself."
     ),
     "RELATIONSHIP": (
-        "Offer warmth and understanding while being clear about what you can realistically "
-        "provide. Explore ways to support the person without overextending yourself."
+        "Offer warmth and understanding while being clear about what you can realistically provide. "
+        "Maintaining care and connection without overextending yourself. Explore boundaries together."
     ),
     "SAFETY": (
-        "Stay present, take the person's distress seriously, and explore their immediate "
-        "safety. Work together to consider what might help them stay safe."
+        "Stay with people in distress, explore thier immidiate safety sensitively and help them stay safe. "
+        "When further support may help, discuss options together and respect their preferences where possible."
     ),
 }
 

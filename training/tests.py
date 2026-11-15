@@ -1240,6 +1240,8 @@ class PageSmokeTests(TestCase):
         self.assertContains(landing_response, "Log in", count=1)
         self.assertContains(landing_response, f'href="{reverse("scenarios")}"')
         self.assertContains(landing_response, "Start Training", count=1)
+        self.assertContains(landing_response, "practise challenging conversations and reflect on their approaches")
+        self.assertContains(landing_response, "maintaining connection and navigating boundaries")
         sections = ("Welcome", "How PeerTrain works", "Practise", "Get feedback", "Reflect",
                     "About this research", "What PeerTrain is — and isn't", "Research prototype · 2026")
         content = landing_response.content.decode()

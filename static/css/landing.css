@@ -59,6 +59,10 @@
   font-size: 1.1rem;
 }
 
+.peertrain-landing-hero p:first-of-type {
+  margin-bottom: 0.75rem;
+}
+
 .peertrain-landing-hero .btn {
   display: inline-flex;
   align-items: center;

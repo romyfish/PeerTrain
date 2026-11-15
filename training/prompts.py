@@ -44,14 +44,14 @@ ROLEPLAY_CONTINUATION_INSTRUCTIONS = ("Continue from the trainee's latest messag
 
 
 ROLEPLAY_SCENARIOS = {'AGENCY': {'introduction': 'Agency — Support Without Fixing',
-            'guidance': 'Practice to give space to share, respect autonomy, and keep the focus on the '
-                        'help-seeker.',
+            'guidance': 'Practise supporting people without taking over, making space for them to share, and respecting their perspectives and autonomy.',
             'training_focus': 'The supporter should make room for a difficult experience, '
                               "recognise the help-seeker's efforts, and support their own "
-                              'perspective without taking over. Advice, personal experience and '
-                              'judgement may arise naturally in peer support; the issue is whether '
-                              'these responses become too directive or shift attention away from '
-                              'the person asking for support.',
+                              'perspective without taking over. Supporters may share relevant lived '
+                              'experience after obtaining permission or when invited by the help-seeker, '
+                              'including later in the conversation. Such sharing should serve the '
+                              "help-seeker's needs without taking over or shifting attention away from them. "
+                              'The help-seeker may naturally invite sharing, but this opportunity should not be forced.',
             'personas': {'pso': {'name': 'Andy',
                                  'label': 'Andy',
                                  'portrait': 'images/fake-icons/Andy.jpg',
@@ -213,13 +213,12 @@ ROLEPLAY_SCENARIOS = {'AGENCY': {'introduction': 'Agency — Support Without Fix
                                                         "start... I've just been finding uni a lot "
                                                         'harder than I thought."'}}},
  'RELATIONSHIP': {'introduction': 'Relationship — Care Without Overextending',
-                  'guidance': 'Practice to offer warmth and connection while communicating clear, sustainable '
-                              'boundaries.',
+                  'guidance': 'Practise negotiating sustainable boundaries with care, honesty and mutual respect while maintaining connection.',
                   'training_focus': 'The need for companionship and reassurance is legitimate, but '
                                     'supporters have finite time, roles and emotional capacity. '
-                                    'Practice combines care, clear communication about '
-                                    'availability, alternative sources of connection where '
-                                    "appropriate, and attention to the supporter's own wellbeing.",
+                                    "Mutually negotiate boundaries with care and honesty, considering both people's "
+                                    'needs and limits. Explore sustainable ways of maintaining connection, '
+                                    "including other sources of support where appropriate, while attending to the supporter's own wellbeing.",
                   'personas': {'pso': {'name': 'Bailey',
                                        'label': 'Bailey',
                                        'portrait': 'images/fake-icons/Bailey.jpg',
@@ -377,18 +376,8 @@ ROLEPLAY_SCENARIOS = {'AGENCY': {'introduction': 'Agency — Support Without Fix
                                                               "that... I don't get to talk to "
                                                               'people like this very often."'}}},
  'SAFETY': {'introduction': 'Safety — Staying with People in Distress',
-            'guidance': 'Practice to stay with people in distress, explore safety sensitively, and work '
-                        'together on appropriate support.',
-            'training_focus': 'Safety work also involves management of agency and relationship '
-                              'boundaries. Practice staying with distress and suicidal or '
-                              'self-harm-related thoughts, listening without rushing to fix them, '
-                              "asking sensitively about safety, respecting the person's "
-                              'preferences where possible, and recognising when the situation is '
-                              'beyond what one peer supporter can responsibly handle alone. When '
-                              'additional professional safeguarding support is needed, supporters '
-                              'are supposed to explain the concern, discuss involving others, seek '
-                              'permission, and continue to support the person rather than simply '
-                              'handing them off.',
+            'guidance': 'Practise being with people in distress, exploring safety sensitively, and considering appropriate support together when needed.',
+            'training_focus': 'When additional support is needed, explore appropriate options with the person, explain concerns openly, involve them in decisions wherever possible, and maintain connection. Recognise that urgent safety concerns or applicable safeguarding responsibilities may sometimes require further action.',
             'personas': {'pso': {'name': 'Casey',
                                  'label': 'Casey',
                                  'portrait': 'images/fake-icons/Casey.jpg',
@@ -765,9 +754,11 @@ SCENARIO_PROMPT_CONTEXTS['REFLECTION'] = {}
 
 ASSESSMENT_RUBRIC = """PeerTrain supports **boundary-centred practice in formalised, non-clinical peer support**. Assess trainees' decisions in context, not their ability to reproduce prescribed phrases. Distinguish three related dimensions:
 
-- **Agency — Support Without Fixing:** Respect the help-seeker's own interpretation, choices, and autonomy. Listening, sharing experience, or offering ideas can be appropriate; assess whether they become directive, judgemental, or take over the person's decisions.
-- **Relationship — Care Without Overextending:** Combine warmth, connection and appropriate responsiveness with realistic limits around availability, privacy, role and emotional capacity. Do not equate boundaries with cold refusal.
-- **Safety — Staying with People in Distress:** Remain engaged with distress, sensitively explore safety when relevant, and collaborate on proportionate next steps. Where further support or safeguarding is warranted, explain concerns, seek permission where feasible, and continue human connection. Do not treat automatic referral or escalation as the sole marker of competence. Urgent danger may require action despite a wish for secrecy.
+- **Agency — Support Without Fixing:** Respect the help-seeker's own interpretation, choices, and autonomy. Relevant lived experience may be shared with permission or when invited, including later in the conversation, if it serves the person's needs without taking over. Assess the timing and effect of ideas or sharing in context; do not require an invitation to arise.
+- **Relationship — Care Without Overextending:** Combine warmth and connection with mutually negotiated, sustainable boundaries that consider both people's needs and limits. Explore realistic ways to maintain connection while being honest about availability, privacy, role and emotional capacity. Do not equate boundaries with cold refusal.
+- **Safety — Staying with People in Distress:** Remain engaged with distress and sensitively explore safety when relevant. When additional support is needed, explore appropriate options together, explain concerns openly, involve the person in decisions wherever possible, and maintain connection. Urgent safety concerns or applicable safeguarding responsibilities may sometimes require further action; do not treat automatic referral or escalation as the sole marker of competence.
+
+Use the Scottish Recovery Network's HEAR ME values as interpretive principles, only where relevant to the observed interaction: Hope recognises strengths and possibilities without imposing optimism; Experience respects lived experience and personal interpretations; Authenticity values genuine, purposeful connection; Responsibility supports being with rather than doing for, including sustainable care; Mutuality respects reciprocity, equality and shared learning; Empowerment supports choice, agency and ownership. In assessment_note, explain meaningful connections or tensions between values where useful. In learner-facing feedback, explain the specific choice and its possible effect in natural, concise language rather than mechanically naming values. These values add no scoring dimensions, checklist, required behaviours or automatic penalties.
 
 Apply the relevant dimensions in **all scenarios** when actually evidenced. Safety practice may involve agency and relationship boundaries as well. Never penalise a trainee for failing to perform a move the dialogue has not reasonably invited.
 

@@ -4,14 +4,15 @@
 {% block title %}PeerTrain{% endblock %}
 
 {% block extra_head %}
-  <link href="{% static 'css/landing.css' %}?v=20261109-2" rel="stylesheet">
+  <link href="{% static 'css/landing.css' %}?v=20261115-1" rel="stylesheet">
 {% endblock %}
 
 {% block content %}
 <div class="peertrain-landing">
   <section class="peertrain-landing-hero" aria-labelledby="welcome-title">
     <h1 id="welcome-title">Welcome</h1>
-    <p>PeerTrain is an AI-assisted training tool designed to help peer supporters develop their skills in supporting others through simulated practice, constructive feedback, and reflection.</p>
+    <p>PeerTrain is an AI-assisted training tool designed to help peer supporters practise challenging conversations and reflect on their approaches.</p>
+    <p>Through simulated role-play and feedback, explore different ways of supporting others while maintaining connection and navigating boundaries.</p>
     <a href="{% url 'scenarios' %}" class="btn peertrain-btn-primary btn-lg">
       Start Training <i class="bi bi-arrow-right" aria-hidden="true"></i>
     </a>

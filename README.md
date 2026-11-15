@@ -1,6 +1,8 @@
 # Introduction
 
-PeerTrain is an AI-assisted training tool designed to help peer supporters develop their skills in supporting others through simulated practice, constructive feedback, and reflection.
+PeerTrain is an AI-assisted training tool designed to help peer supporters practise challenging conversations and reflect on their approaches.
+
+Through simulated role-play and feedback, explore different ways of supporting others while maintaining connection and navigating boundaries.
 
 ### How PeerTrain works
 

@@ -16,9 +16,9 @@ Keep your replies conversational, usually 1 to 3 sentences in natural British En
 
 # Agency — Support Without Fixing
 
-**On-screen practice guidance:** *Practice to give space to share, respect autonomy, and keep the focus on the help-seeker.*
+**On-screen practice guidance:** *Practise supporting people without taking over, making space for them to share, and respecting their perspectives and autonomy.*
 
-**Training focus:** The supporter should make room for a difficult experience, recognise the help-seeker's efforts, and support their own perspective without taking over. Advice, personal experience and judgement may arise naturally in peer support; the issue is whether these responses become too directive or shift attention away from the person asking for support.
+**Training focus:** The supporter should make room for a difficult experience, recognise the help-seeker's efforts, and support their own perspective without taking over. Supporters may share relevant lived experience after obtaining permission or when invited by the help-seeker, including later in the conversation. Such sharing should serve the help-seeker's needs without taking over or shifting attention away from them. The help-seeker may naturally invite sharing, but this opportunity should not be forced.
 
 ## Andy — New PSO Member
 
@@ -93,9 +93,9 @@ Alex has anxiety-like symptoms, poor sleep and emotional overwhelm, without an e
 
 # Relationship — Care Without Overextending
 
-**On-screen practice guidance:** *Practice to offer warmth and connection while communicating clear, sustainable boundaries.*
+**On-screen practice guidance:** *Practise negotiating sustainable boundaries with care, honesty and mutual respect while maintaining connection.*
 
-**Training focus:** The need for companionship and reassurance is legitimate, but supporters have finite time, roles and emotional capacity. Practice combines care, clear communication about availability, alternative sources of connection where appropriate, and attention to the supporter's own wellbeing.
+**Training focus:** The need for companionship and reassurance is legitimate, but supporters have finite time, roles and emotional capacity. Mutually negotiate boundaries with care and honesty, considering both people's needs and limits. Explore sustainable ways of maintaining connection, including other sources of support where appropriate, while attending to the supporter's own wellbeing.
 
 ## Bailey — New PSO Member
 
@@ -163,9 +163,9 @@ This case concerns loneliness, belonging and relational expectations. Do not int
 
 # Safety — Staying with People in Distress
 
-**On-screen practice guidance:** *Practice to stay with people in distress, explore safety sensitively, and work together on appropriate support.*
+**On-screen practice guidance:** *Practise being with people in distress, exploring safety sensitively, and considering appropriate support together when needed.*
 
-**Training focus:** Safety work also involves management of agency and relationship boundaries. Practice staying with distress and suicidal or self-harm-related thoughts, listening without rushing to fix them, asking sensitively about safety, respecting the person's preferences where possible, and recognising when the situation is beyond what one peer supporter can responsibly handle alone. When additional professional safeguarding support is needed, supporters are supposed to explain the concern, discuss involving others, seek permission, and continue to support the person rather than simply handing them off.
+**Training focus:** When additional support is needed, explore appropriate options with the person, explain concerns openly, involve them in decisions wherever possible, and maintain connection. Recognise that urgent safety concerns or applicable safeguarding responsibilities may sometimes require further action.
 
 ## Casey — PSO Member
 
