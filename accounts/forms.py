@@ -21,9 +21,9 @@ class StyledFormMixin:
 
 class LoginForm(StyledFormMixin, forms.Form):
     email = forms.EmailField(
-        label="University Email",
+        label="Email",
         widget=forms.EmailInput(
-            attrs={"placeholder": "you@university.ac.uk", "autocomplete": "email"}
+            attrs={"placeholder": "you@org.com", "autocomplete": "email"}
         ),
     )
     password = forms.CharField(
@@ -94,6 +94,25 @@ class BaseRegistrationForm(StyledFormMixin, UserCreationForm):
 
 
 class TraineeRegistrationForm(BaseRegistrationForm):
+    full_name = forms.CharField(
+        label="Name",
+        widget=forms.TextInput(attrs={"placeholder": "Amy"}),
+    )
+    email = forms.EmailField(
+        label="Email",
+        widget=forms.EmailInput(attrs={"placeholder": "you@org.com"}),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["password1"].widget.attrs["placeholder"] = "Create a password"
+        self.fields["password1"].help_text = ""
+
+    def validate_password_for_user(self, user, password_field_name="password2"):
+        # Trainee registration still requires a password and matching confirmation.
+        # Administrator registration keeps Django's configured validators.
+        return
+
     def save(self, commit=True):
         user = super().save(commit=False)
         user.role = User.Roles.TRAINEE

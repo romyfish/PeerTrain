@@ -19,8 +19,8 @@ class AssessmentPresentationTests(SimpleTestCase):
             (3, "Making progress", "Good progress", "progress"),
             (4, "Well handled", "Well done", "handled"),
             (5, "Excellent handling", "Excellent work", "excellent"),
-            (None, "Listening in progress", "\u2014", "neutral"),
-            (0, "Listening in progress", "\u2014", "neutral"),
+            (None, "Listening in progress", "Not enough evidence", "neutral"),
+            (0, "Listening in progress", "Not enough evidence", "neutral"),
         ]
         for score, live_label, overall_title, tone in cases:
             with self.subTest(score=score):

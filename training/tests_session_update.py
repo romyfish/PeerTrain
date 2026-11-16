@@ -290,6 +290,44 @@ class SessionUpdateTests(TestCase):
         self.assertEqual(call.call_count, 2)
         self.assertIn('provisional level 1-5', call.call_args.args[1]['validation_feedback'])
 
+    def test_established_status_cannot_reset_on_ordinary_turn(self):
+        earlier = self.message('The choice is yours.')
+        TurnAssessment.objects.create(trainee_message=earlier, overall_status_level=4,
+            feedback_type='affirmation', feedback_text='You preserved their choice.',
+            record={'opportunity_observed': True})
+        message = self.message('I am listening.')
+        base = self.result().model_copy(update={
+            'relevant_dimensions': [], 'observed_evidence': None,
+            'opportunity_observed': False, 'boundary_relevant': False,
+            'assessment_note': 'Ordinary listening; the prior boundary evidence remains.',
+            'feedback_text': 'You give them space to continue.',
+        })
+        reset = base.model_copy(update={'overall_status_level': 0})
+        retained = base.model_copy(update={'overall_status_level': 4})
+        with patch.object(tasks, 'task_call', side_effect=[reset, retained]) as call:
+            row = tasks.assess_turn(self.session, message)
+        self.assertEqual(row.overall_status_level, 4)
+        self.assertEqual(call.call_count, 2)
+        self.assertIn('rather than resetting to 0', call.call_args.args[1]['validation_feedback'])
+
+    def test_new_boundary_concern_can_lower_established_status(self):
+        earlier = self.message('The choice is yours.')
+        TurnAssessment.objects.create(trainee_message=earlier, overall_status_level=4,
+            feedback_type='affirmation', feedback_text='You preserved their choice.',
+            record={'opportunity_observed': True})
+        message = self.message('I will decide for you.')
+        concern = self.result().model_copy(update={
+            'observed_evidence': 'I will decide for you.',
+            'assessment_note': 'The trainee now takes over the decision.',
+            'overall_status_level': 2,
+            'feedback_type': 'reflective_prompt',
+            'feedback_text': 'You want to help; leaving the decision with them would preserve their agency.',
+        })
+        with patch.object(tasks, 'task_call', return_value=concern) as call:
+            row = tasks.assess_turn(self.session, message)
+        self.assertEqual(call.call_count, 1)
+        self.assertEqual(row.overall_status_level, 2)
+
     def test_persistent_inconsistency_fails_without_saving(self):
         message = self.message('Hello, it is good to meet you.')
         inconsistent = self.result().model_copy(update={
@@ -692,6 +730,97 @@ class SessionUpdateTests(TestCase):
         self.assertEqual(call.call_args.args[1]['assessments'][0]['trainee_message_id'], message.pk)
         self.assertEqual(feedback.review_items.get().message_id, message.pk)
         self.assertEqual(feedback.review_items.get().better_reply, 'What would feel helpful?')
+
+    def test_review_uses_latest_successful_nonzero_cumulative_status(self):
+        for level in (0, 2, 3, 4, 0):
+            message = self.message(f'Reply {level}')
+            TurnAssessment.objects.create(trainee_message=message, overall_status_level=level,
+                feedback_type='affirmation', feedback_text=f'Saved feedback {level}.')
+        failed = self.message('Unsuccessful assessment')
+        TurnAssessment.objects.create(trainee_message=failed, overall_status_level=5,
+            feedback_type='none', succeeded=False)
+        self.session.status = 'COMPLETED'
+        self.session.save(update_fields=['status'])
+        review = tasks.ReviewResult(overview='Saved overview.', strengths='Saved strength.',
+                                    considerations='Saved consideration.')
+        with patch.object(tasks, 'task_call', return_value=review) as call:
+            first = self.client.get(self.url)
+        self.assertEqual(call.call_count, 1)
+        self.assertContains(first, 'Well done')
+        feedback = Feedback.objects.get(session=self.session)
+        self.assertEqual(feedback.overall_score, 4)
+        self.session.refresh_from_db()
+        self.assertEqual(self.session.overall_score, 4)
+        with patch.object(tasks, 'task_call') as call:
+            reopened = self.client.get(self.url)
+        call.assert_not_called()
+        self.assertContains(reopened, 'Saved overview.')
+        self.assertContains(reopened, 'Saved strength.')
+        self.assertEqual(Feedback.objects.get(session=self.session).pk, feedback.pk)
+
+    def test_review_uses_later_lower_level_when_new_evidence_supports_it(self):
+        for level in (4, 2):
+            message = self.message(f'Reply at level {level}')
+            TurnAssessment.objects.create(trainee_message=message, overall_status_level=level,
+                feedback_type='affirmation', feedback_text=f'Saved feedback {level}.')
+        self.session.status = 'COMPLETED'
+        self.session.save(update_fields=['status'])
+        with patch.object(tasks, 'task_call', return_value=tasks.ReviewResult(
+                strengths='Saved strength.', considerations='Saved consideration.')):
+            feedback = tasks.saved_review(self.session)
+        self.assertEqual(feedback.overall_score, 2)
+
+    def test_review_with_only_level_zero_has_neutral_label(self):
+        message = self.message('Hello.')
+        TurnAssessment.objects.create(trainee_message=message, overall_status_level=0,
+            feedback_type='affirmation', feedback_text='You offered a welcome.')
+        self.session.status = 'COMPLETED'
+        self.session.save(update_fields=['status'])
+        with patch.object(tasks, 'task_call', return_value=tasks.ReviewResult(
+                strengths='You listened.', considerations='Keep listening.')):
+            response = self.client.get(self.url)
+        self.assertIsNone(Feedback.objects.get(session=self.session).overall_score)
+        self.assertContains(response, 'peertrain-assessment-title peertrain-assessment-neutral')
+        self.assertContains(response, 'Not enough evidence')
+
+    def test_reopening_repairs_only_missing_score_from_saved_assessments(self):
+        for level in (2, 4, 0):
+            message = self.message(f'Reply {level}')
+            TurnAssessment.objects.create(trainee_message=message, overall_status_level=level,
+                feedback_type='affirmation', feedback_text=f'Saved feedback {level}.')
+        feedback = self.complete()
+        feedback.overall_score = None
+        feedback.overview = 'Original overview.'
+        feedback.save(update_fields=['overall_score', 'overview'])
+        self.session.overall_score = None
+        self.session.save(update_fields=['overall_score'])
+        with patch.object(tasks, 'task_call') as call:
+            response = self.client.get(self.url)
+        call.assert_not_called()
+        feedback.refresh_from_db()
+        self.session.refresh_from_db()
+        self.assertEqual(feedback.overall_score, 4)
+        self.assertEqual(self.session.overall_score, 4)
+        self.assertEqual(feedback.overview, 'Original overview.')
+        self.assertContains(response, 'Original overview.')
+        self.assertContains(response, 'Well done')
+
+    def test_reopening_preserves_valid_saved_scores_and_feedback(self):
+        message = self.message('Boundary choice')
+        TurnAssessment.objects.create(trainee_message=message, overall_status_level=4,
+            feedback_type='affirmation', feedback_text='Original turn feedback.')
+        feedback = self.complete()
+        self.session.overall_score = 3
+        self.session.save(update_fields=['overall_score'])
+        with patch.object(tasks, 'task_call') as call:
+            response = self.client.get(self.url)
+        call.assert_not_called()
+        feedback.refresh_from_db()
+        self.session.refresh_from_db()
+        self.assertEqual(feedback.overall_score, 3)
+        self.assertEqual(self.session.overall_score, 3)
+        self.assertEqual(feedback.strengths, 'Agency was supported.')
+        self.assertContains(response, 'Original turn feedback.')
 
     def test_saved_review_is_immutable_from_history(self):
         feedback = self.complete()

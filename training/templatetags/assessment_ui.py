@@ -20,7 +20,7 @@ _STATUSES = {
 def assessment_status(score, overall=False):
     live_label, overall_label, tone, icon = _STATUSES.get(
         score,
-        ("Listening in progress", "—", "neutral", "listening-in-progress"),
+        ("Listening in progress", "Not enough evidence", "neutral", "listening-in-progress"),
     )
     return {
         "label": overall_label if overall else live_label,

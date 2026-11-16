@@ -46,6 +46,55 @@ class AuthenticationFlowTests(TestCase):
         self.assertNotContains(response, "Account type")
         self.assertNotContains(response, "This page creates trainee accounts only.")
 
+    def test_trainee_registration_labels_and_placeholders(self):
+        form = self.client.get(reverse("register")).context["form"]
+        self.assertEqual(form.fields["full_name"].label, "Name")
+        self.assertEqual(form.fields["full_name"].widget.attrs["placeholder"], "Amy")
+        self.assertEqual(form.fields["email"].label, "Email")
+        self.assertEqual(form.fields["email"].widget.attrs["placeholder"], "you@org.com")
+        self.assertEqual(form.fields["password1"].widget.attrs["placeholder"], "Create a password")
+        login_email = self.client.get(reverse("login")).context["form"].fields["email"]
+        self.assertEqual(login_email.label, "Email")
+        self.assertEqual(login_email.widget.attrs["placeholder"], "you@org.com")
+
+    def test_trainee_accepts_short_numeric_and_common_passwords(self):
+        for index, password in enumerate(("a", "123456", "password", "trainee3@example.com")):
+            email = f"trainee{index}@example.com"
+            with self.subTest(password=password):
+                response = self.client.post(reverse("register"), {
+                    "full_name": "Amy", "email": email,
+                    "password1": password, "password2": password,
+                })
+                self.assertRedirects(response, reverse("login"))
+                user = User.objects.get(email=email)
+                self.assertTrue(user.check_password(password))
+                self.assertNotEqual(user.password, password)
+                self.assertEqual(user.first_name, "Amy")
+                self.assertEqual(user.last_name, "")
+
+    def test_trainee_rejects_mismatched_and_empty_passwords(self):
+        for first, second in (("a", "b"), ("", "")):
+            with self.subTest(first=first, second=second):
+                response = self.client.post(reverse("register"), {
+                    "full_name": "Amy", "email": "amy@example.com",
+                    "password1": first, "password2": second,
+                })
+                self.assertEqual(response.status_code, 200)
+                self.assertTrue(response.context["form"].errors)
+                self.assertFalse(User.objects.filter(email="amy@example.com").exists())
+
+    def test_admin_registration_keeps_password_validators(self):
+        for password in ("a", "123456", "password"):
+            with self.subTest(password=password):
+                response = self.client.post(reverse("admin_register"), {
+                    "full_name": "Sarah Kim", "email": "admin.candidate@example.com",
+                    "admin_passcode": "secret-admin-code",
+                    "password1": password, "password2": password,
+                })
+                self.assertEqual(response.status_code, 200)
+                self.assertIn("password2", response.context["form"].errors)
+                self.assertFalse(User.objects.filter(email="admin.candidate@example.com").exists())
+
     def test_public_pages_render_the_expected_logo_and_favicon(self):
         landing_response = self.client.get(reverse("landing"))
         login_response = self.client.get(reverse("login"))

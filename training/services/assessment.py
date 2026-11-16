@@ -128,8 +128,13 @@ def transcript(session, through=None):
 
 
 def assessment_records(session):
-    return list(TurnAssessment.objects.filter(trainee_message__session=session).values(
+    return list(TurnAssessment.objects.filter(trainee_message__session=session).order_by('trainee_message_id').values(
         'trainee_message_id', 'overall_status_level', 'feedback_type', 'feedback_text', 'record', 'succeeded'))
+
+
+def latest_cumulative_level(records):
+    return next((row['overall_status_level'] for row in reversed(records)
+                 if row['succeeded'] and 1 <= row['overall_status_level'] <= 5), None)
 
 
 def assessor_state(session, message):
@@ -166,6 +171,8 @@ def assessment_consistency_error(result, message, previous):
     prior_opportunity = any(row['succeeded'] and (row['record'].get('opportunity_observed')
                                                     or row['overall_status_level'] > 0)
                             for row in previous)
+    if result.overall_status_level == 0 and latest_cumulative_level(previous) is not None:
+        return 'A cumulative level 1-5 was already established; retain or revise it using evidence, rather than resetting to 0.'
     if result.overall_status_level > 0 and not (result.opportunity_observed or prior_opportunity):
         return 'Levels 1-5 require a genuine boundary opportunity in this or an earlier turn.'
     if result.overall_status_level == 0 and result.opportunity_observed and result.observed_evidence:
@@ -272,11 +279,20 @@ def saved_review(session):
     session.refresh_from_db()
     existing = Feedback.objects.filter(session=session).first()
     if existing:
+        if existing.overall_score is None or session.overall_score is None:
+            level = latest_cumulative_level(assessment_records(session))
+            if level is not None:
+                if existing.overall_score is None:
+                    Feedback.objects.filter(pk=existing.pk, overall_score__isnull=True).update(overall_score=level)
+                    existing.overall_score = level
+                if session.overall_score is None:
+                    TrainingSession.objects.filter(pk=session.pk, overall_score__isnull=True).update(overall_score=level)
+                    session.overall_score = level
         return existing
     if session.review_attention_at:
         return None
     records = assessment_records(session)
-    level = records[-1]['overall_status_level'] if records else 0
+    level = latest_cumulative_level(records)
     try:
         result = task_call('SESSION_REVIEW', dict(
             scenario=session.scenario.boundary_type, transcript=transcript(session), assessments=records,
@@ -286,7 +302,7 @@ def saved_review(session):
     except Exception:
         attention(session, 'review_attention_at', 'REVIEW_FAILED')
         return None
-    feedback = Feedback.objects.create(session=session, overall_score=level or None,
+    feedback = Feedback.objects.create(session=session, overall_score=level,
         overview=result.overview, strengths=result.strengths, improvements=result.considerations, generation_source=source)
     trainee_messages = {m.pk: m for m in session.messages.filter(sender_type='USER')}
     saved_turns = {row['trainee_message_id']: row for row in records}
@@ -313,7 +329,7 @@ def saved_review(session):
             message_excerpt=example.quotation, issue_label='Feedback',
             why_it_matters=example.consideration, better_reply=example.alternative_reply,
             boundary_key=example.dimension.upper(), source=source)
-    session.overall_score = level or None
+    session.overall_score = level
     session.save(update_fields=['overall_score'])
     return feedback
 
