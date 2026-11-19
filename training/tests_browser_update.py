@@ -416,6 +416,92 @@ class BrowserUpdateTests(StaticLiveServerTestCase):
                     self.assertGreater(dimensions['conversationHeight'], 0)
             browser.close()
 
+    def test_review_accordion_fills_available_height_and_keeps_internal_scrolling(self):
+        from playwright.sync_api import sync_playwright, expect
+
+        user = get_user_model().objects.create_user(username='review-accordion-browser', role='TRAINEE')
+        scenario = Scenario.objects.create(title='Accordion', boundary_type='AGENCY', estimated_duration_min=10)
+        session = TrainingSession.objects.create(user=user, scenario=scenario, persona='pso', status='COMPLETED')
+        Feedback.objects.create(session=session, overview='Detailed feedback. ' * 300,
+                                strengths='Listened well.', improvements='Ask another question.')
+        for number in range(25):
+            Message.objects.create(session=session, sender_type='AI', content=f'Message {number}. ' * 30)
+        short_session = TrainingSession.objects.create(user=user, scenario=scenario, persona='pso', status='COMPLETED')
+        Feedback.objects.create(session=short_session, overview='Brief feedback.',
+                                strengths='Listened well.', improvements='Ask another question.')
+        Message.objects.create(session=short_session, sender_type='AI', content='Opening disclosure.')
+        self.client.force_login(user)
+        cookie = self.client.cookies[settings.SESSION_COOKIE_NAME].value
+
+        with sync_playwright() as driver:
+            browser = driver.chromium.launch(executable_path=BROWSER, headless=True)
+            context = browser.new_context(viewport={'width': 1440, 'height': 900})
+            context.add_cookies([{'name': settings.SESSION_COOKIE_NAME, 'value': cookie, 'url': self.live_server_url}])
+            page = context.new_page()
+            page.goto(self.live_server_url + reverse('session_review', args=[session.pk]))
+            overview = page.locator('.review-overview')
+            conversation = page.locator('.review-conversation')
+            overview_button = overview.locator('[data-review-toggle]')
+            conversation_button = conversation.locator('[data-review-toggle]')
+            content = page.locator('#review-overview-content')
+            transcript = page.locator('#review-transcript')
+
+            def heights():
+                return page.evaluate('''() => ({
+                    feedback: document.querySelector('.review-feedback').clientHeight,
+                    overview: document.querySelector('.review-overview').offsetHeight,
+                    conversation: document.querySelector('.review-conversation').offsetHeight,
+                    overviewScroll: document.querySelector('#review-overview-content').scrollHeight,
+                    overviewClient: document.querySelector('#review-overview-content').clientHeight,
+                    transcriptScroll: document.querySelector('#review-transcript').scrollHeight,
+                    transcriptClient: document.querySelector('#review-transcript').clientHeight,
+                })''')
+
+            expect(overview_button).to_have_attribute('aria-expanded', 'true')
+            expect(conversation_button).to_have_attribute('aria-expanded', 'true')
+            initial = heights()
+            self.assertAlmostEqual(initial['overview'], initial['conversation'], delta=20)
+            self.assertGreater(initial['overviewScroll'], initial['overviewClient'])
+            self.assertGreater(initial['transcriptScroll'], initial['transcriptClient'])
+
+            overview_button.click()
+            expect(overview_button).to_have_attribute('aria-expanded', 'false')
+            expect(content).to_be_hidden()
+            self.assertGreater(heights()['conversation'], initial['conversation'] + 100)
+            transcript.evaluate('el => el.scrollTop = 100')
+            self.assertGreater(transcript.evaluate('el => el.scrollTop'), 0)
+
+            conversation_button.click()
+            expect(conversation_button).to_have_attribute('aria-expanded', 'false')
+            expect(overview_button).to_have_attribute('aria-expanded', 'true')
+            expect(transcript).to_be_hidden()
+            self.assertGreater(heights()['overview'], initial['overview'] + 100)
+            content.evaluate('el => el.scrollTop = 100')
+            self.assertGreater(content.evaluate('el => el.scrollTop'), 0)
+
+            conversation_button.click()
+            expect(overview_button).to_have_attribute('aria-expanded', 'true')
+            expect(conversation_button).to_have_attribute('aria-expanded', 'true')
+            self.assertAlmostEqual(heights()['overview'], heights()['conversation'], delta=20)
+
+            page.goto(self.live_server_url + reverse('session_review', args=[short_session.pk]))
+            page.locator('.review-conversation [data-review-toggle]').click()
+            compact = page.evaluate('''() => {
+                const feedback = document.querySelector('.review-feedback').getBoundingClientRect();
+                const conversation = document.querySelector('.review-conversation').getBoundingClientRect();
+                return {height: feedback.height, emptySpace: feedback.bottom - conversation.bottom};
+            }''')
+            self.assertLess(compact['height'], 400)
+            self.assertLessEqual(compact['emptySpace'], 2)
+
+            page.set_viewport_size({'width': 390, 'height': 900})
+            page.goto(self.live_server_url + reverse('session_review', args=[session.pk]))
+            page.locator('.review-conversation [data-review-toggle]').click()
+            mobile = heights()
+            self.assertLessEqual(mobile['feedback'], 750)
+            self.assertGreater(mobile['overviewScroll'], mobile['overviewClient'])
+            browser.close()
+
     def test_review_alternative_navigation_scopes_scroll_and_supports_keyboard_and_reduced_motion(self):
         from playwright.sync_api import sync_playwright, expect
         user = get_user_model().objects.create_user(username='alternative-browser', role='TRAINEE')

@@ -1,4 +1,21 @@
 (() => {
+  const accordionButtons = [...document.querySelectorAll('[data-review-toggle]')];
+  const setExpanded = (button, expanded) => {
+    const section = button.closest('section');
+    const content = document.getElementById(button.getAttribute('aria-controls'));
+    button.setAttribute('aria-expanded', String(expanded));
+    content.hidden = !expanded;
+    section.toggleAttribute('data-collapsed', !expanded);
+  };
+  accordionButtons.forEach(button => {
+    button.addEventListener('click', () => {
+      const expanded = button.getAttribute('aria-expanded') === 'true';
+      if (expanded) {
+        accordionButtons.filter(other => other !== button).forEach(other => setExpanded(other, true));
+      }
+      setExpanded(button, !expanded);
+    });
+  });
   const transcript = document.querySelector('#review-transcript');
   let highlightTimer;
   document.querySelectorAll('[data-alternative-turn]').forEach(button => {

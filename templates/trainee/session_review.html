@@ -5,7 +5,7 @@
 {% block extra_head %}
 <link href="{% static 'css/chat.css' %}?v=20261103-4" rel="stylesheet">
 <link href="{% static 'css/assessment.css' %}" rel="stylesheet">
-<link href="{% static 'css/review.css' %}?v=20261110-1" rel="stylesheet">
+<link href="{% static 'css/review.css' %}?v=20261119-2" rel="stylesheet">
 {% endblock %}
 {% block content %}
 <div class="peertrain-review {{ scenario_meta.theme_class }}">
@@ -19,15 +19,15 @@
   <div class="review-columns">
     <div class="review-feedback" role="group" aria-label="Feedback">
       <section class="review-overview" aria-labelledby="overview-heading">
-        <div class="review-overview-heading"><h3 id="overview-heading">Session overview</h3>
+        <div class="review-overview-heading"><h3 id="overview-heading"><button type="button" class="review-accordion-toggle" aria-expanded="true" aria-controls="review-overview-content" data-review-toggle><span>Session overview</span>
         {% assessment_status feedback.overall_score overall=True as overall_status %}
         <span class="review-overall-status peertrain-assessment-{{ overall_status.tone }}">
           <img class="peertrain-assessment-icon" src="{% static overall_status.icon_asset %}" width="28" height="28" alt="" aria-hidden="true">
           <strong class="peertrain-assessment-title peertrain-assessment-{{ overall_status.tone }}">{{ overall_status.label }}</strong>
         </span>
-        </div>
+        <i class="bi bi-chevron-down" aria-hidden="true"></i></button></h3></div>
+        <div class="review-overview-content" id="review-overview-content">
         {% if session.review_attention_at %}<p role="alert">The session overview requires researcher attention. Your conversation and saved feedback are available below. Please contact the researcher.</p>{% endif %}
-        <div class="review-overview-content">
         {% if feedback.overview %}<p class="review-overall-copy">{{ feedback.overview|boundary_highlights }}</p>{% endif %}
         <section class="review-summary-card review-summary-strengths"><h4><i class="bi bi-check-circle" aria-hidden="true"></i> What worked</h4>
           <ul>{% for strength in feedback.strength_list %}<li>{{ strength|boundary_highlights }}</li>{% endfor %}</ul>
@@ -38,7 +38,8 @@
         </div>
       </section>
       <section class="review-conversation" aria-labelledby="conversation-heading">
-      <h3 id="conversation-heading">Conversation review</h3>
+      <h3 id="conversation-heading"><button type="button" class="review-accordion-toggle" aria-expanded="true" aria-controls="review-conversation-content" data-review-toggle><span>Conversation review</span><i class="bi bi-chevron-down" aria-hidden="true"></i></button></h3>
+      <div class="review-conversation-content" id="review-conversation-content">
       {% if alternative_turns %}
       <nav class="review-alternative-nav" aria-labelledby="alternative-nav-heading">
         <h4 id="alternative-nav-heading"><i class="bi bi-lightbulb" aria-hidden="true"></i> Alternative replies to consider <span class="review-alternative-count">({{ alternative_count }})</span></h4>
@@ -62,6 +63,7 @@
             {% endfor %}
           {% endif %}
         {% endfor %}
+      </div>
       </div>
       </section>
     </div>
@@ -102,4 +104,4 @@
   </div>
 </div>
 {% endblock %}
-{% block extra_scripts %}<script src="{% static 'js/review.js' %}?v=20261109-1"></script>{% endblock %}
+{% block extra_scripts %}<script src="{% static 'js/review.js' %}?v=20261119-1"></script>{% endblock %}
